@@ -76,14 +76,20 @@ for mod in http.server json os threading; do
 done
 ok "Python 标准库完整"
 
-# 检查 GBK 编码支持
-GBK_OK=0
+# 检查 GBK 编码支持（优先系统 GBK，回退到内置表）
+SYSTEM_GBK=0
 if "$PYTHON_BIN" -c "'中'.encode('gbk')" 2>/dev/null; then
-    GBK_OK=1
-    ok "GBK 编码支持: 可用"
+    SYSTEM_GBK=1
+    ok "GBK 编码支持: 可用 (来源: Python 内置 gbk)"
 else
-    warn "GBK 编码支持: 不可用（GBK 模式将被禁用，仅可用 Unicode 模式）"
-    warn "如需 GBK 支持，请安装完整版 Python 或 _codecs_cn 模块"
+    warn "Python 内置 GBK 不可用（精简版 Python 缺少 _codecs_cn 模块）"
+    # 检查内置回退表
+    if "$PYTHON_BIN" -c "import sys; sys.path.insert(0, '$SCRIPT_DIR'); import gbk_table; print(gbk_table.char_to_gbk_decimal('中'))" 2>/dev/null | grep -q 54992; then
+        ok "GBK 编码支持: 可用 (来源: 内置 GBK 回退编码表)"
+    else
+        warn "GBK 编码支持: 不可用（系统 GBK 和内置回退表均缺失）"
+        warn "GBK 模式将被禁用，仅可用 Unicode 模式"
+    fi
 fi
 
 # 检查 HID 设备
@@ -124,7 +130,7 @@ info "步骤 2/5: 安装文件到 $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR/templates"
 
 # 复制 Python 文件
-for f in app.py encoding.py hid_keyboard.py; do
+for f in app.py encoding.py hid_keyboard.py gbk_table.py; do
     src="$SCRIPT_DIR/$f"
     if [ ! -f "$src" ]; then
         err "源文件不存在: $src"
@@ -335,7 +341,7 @@ line
 echo ""
 printf "  访问地址:  ${CYAN}http://%s:%s${NC}\n" "$IP" "$APP_PORT"
 printf "  HID 设备:  %s\n" "$HID_DEVICE"
-printf "  GBK 支持:  %s\n" "$([ $GBK_OK -eq 1 ] && echo '可用' || echo '不可用（仅 Unicode）')"
+printf "  GBK 支持:  %s\n" "$([ $SYSTEM_GBK -eq 1 ] && echo '可用 (系统内置)' || echo '可用 (内置回退表)')"
 printf "  安装目录:  %s\n" "$INSTALL_DIR"
 echo ""
 echo "  服务管理:"

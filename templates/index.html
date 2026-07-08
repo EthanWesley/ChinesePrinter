@@ -207,7 +207,7 @@
     <div class="info-grid" id="infoGrid">
       <div class="info-item"><div class="k">HID 设备</div><div class="v" id="infoDevice">-</div></div>
       <div class="info-item"><div class="k">设备状态</div><div class="v" id="infoDeviceOk">-</div></div>
-      <div class="info-item"><div class="k">GBK 编码</div><div class="v" id="infoGbk">-</div></div>
+      <div class="info-item"><div class="k">GBK 编码</div><div class="v" id="infoGbk" title="">-</div></div>
       <div class="info-item"><div class="k">监听端口</div><div class="v" id="infoPort">-</div></div>
       <div class="info-item"><div class="k">按键间隔</div><div class="v" id="infoDelay">-</div></div>
       <div class="info-item"><div class="k">Alt 释放延迟</div><div class="v" id="infoAltDelay">-</div></div>
@@ -295,19 +295,26 @@ async function loadConfig() {
   $("infoDevice").textContent = r.device;
   $("infoDeviceOk").textContent = r.device_exists ? "已连接" : "未找到";
   $("infoDeviceOk").className = "v " + (r.device_exists ? "ok" : "bad");
-  $("infoGbk").textContent = r.gbk_available ? "可用" : "不可用";
+  $("infoGbk").textContent = r.gbk_available ? ("可用 (" + (r.gbk_source || "?") + ")") : "不可用";
   $("infoGbk").className = "v " + (r.gbk_available ? "ok" : "bad");
+  $("infoGbk").title = r.gbk_available
+    ? ("来源: " + (r.gbk_source === "system" ? "Python 内置 gbk 编解码" : "内置 GBK 回退编码表"))
+    : "Python 不支持 GBK 且无回退表";
   $("infoPort").textContent = r.server.port;
   $("infoDelay").textContent = r.typing.key_delay + " s";
   $("infoAltDelay").textContent = r.typing.alt_release_delay + " s";
 
-  // 如果 GBK 不可用，自动切到 Unicode 并禁用 GBK 选项
-  if (!r.gbk_available) {
+  // GBK 始终可用（有回退表），无需切换。
+  // 仅当日志需要提示来源时显示
+  if (r.gbk_available && r.gbk_source === "fallback_table") {
+    log("Python 内置 GBK 不可用，已自动回退到内置 GBK 编码表", "warn");
+  } else if (!r.gbk_available) {
+    // 极端情况：回退表也缺失
     $("encoding").value = "unicode";
     updateEncodingTip();
     const gbkOpt = $("encoding").querySelector('option[value="gbk"]');
     if (gbkOpt) gbkOpt.disabled = true;
-    log("当前环境不支持 GBK 编码，已自动切换到 Unicode", "warn");
+    log("GBK 编码完全不可用，已切换到 Unicode", "warn");
   }
   // 如果设备不存在
   if (!r.device_exists) {

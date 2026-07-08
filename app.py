@@ -24,7 +24,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from encoding import encode_text, GBK_AVAILABLE
+from encoding import encode_text, GBK_AVAILABLE, GBK_SOURCE, SYSTEM_GBK_AVAILABLE
 from hid_keyboard import HidKeyboard, HidError
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -144,6 +144,8 @@ class Handler(BaseHTTPRequestHandler):
                 "device": HID_DEVICE,
                 "device_exists": os.path.exists(HID_DEVICE),
                 "gbk_available": GBK_AVAILABLE,
+                "gbk_source": GBK_SOURCE,
+                "system_gbk": SYSTEM_GBK_AVAILABLE,
             })
         elif path == "/api/config":
             self._send_json(200, {
@@ -156,6 +158,8 @@ class Handler(BaseHTTPRequestHandler):
                 "device": HID_DEVICE,
                 "device_exists": os.path.exists(HID_DEVICE),
                 "gbk_available": GBK_AVAILABLE,
+                "gbk_source": GBK_SOURCE,
+                "system_gbk": SYSTEM_GBK_AVAILABLE,
             })
         else:
             self._send_json(404, {"ok": False, "msg": "路径不存在"})
@@ -222,7 +226,10 @@ def main():
     _log(f"ChinesePrinter 启动")
     _log(f"  监听: {HOST}:{PORT}")
     _log(f"  HID 设备: {HID_DEVICE} (存在: {os.path.exists(HID_DEVICE)})")
-    _log(f"  GBK 编码: {'可用' if GBK_AVAILABLE else '不可用'}")
+    gbk_desc = f"可用 (来源: {GBK_SOURCE})"
+    if not GBK_AVAILABLE:
+        gbk_desc = "不可用"
+    _log(f"  GBK 编码: {gbk_desc}")
     _log(f"  按键间隔: {KEY_DELAY}s, Alt 释放延迟: {ALT_RELEASE_DELAY}s")
 
     server = ThreadingHTTPServer((HOST, PORT), Handler)

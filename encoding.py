@@ -6,14 +6,16 @@ Alt 码打字原理：
   例如 "中" 的 GBK 编码是 0xD6D0 = 54992，所以输入 Alt+54992
 - Unicode 模式：按住 Alt + 输入 Unicode 十进制码点 + 松开 Alt
   例如 "中" 的 Unicode 是 U+4E2D = 20013，所以输入 Alt+20013
+
+GBK 编码策略（双保险）：
+  1. 优先使用 Python 内置的 gbk 编解码（速度快，需 _codecs_cn 模块）
+  2. 若内置 gbk 不可用（精简版 Python），回退到 gbk_table.py 内置编码表
+  两种方式对调用方完全透明。
 """
 
-def _check_gbk_available():
-    """检测当前 Python 环境是否支持 GBK 编码。
 
-    嵌入式 Linux（如 Buildroot）上的精简 Python 可能未包含 _codecs_cn
-    模块，导致 GBK 编码不可用。
-    """
+def _check_system_gbk():
+    """检测 Python 内置 GBK 编解码是否可用。"""
     try:
         "中".encode("gbk")
         return True
@@ -21,25 +23,51 @@ def _check_gbk_available():
         return False
 
 
-GBK_AVAILABLE = _check_gbk_available()
+# Python 内置 GBK 是否可用
+SYSTEM_GBK_AVAILABLE = _check_system_gbk()
+
+# 内置回退表是否可用
+_FALLBACK_AVAILABLE = False
+try:
+    import gbk_table as _gbk_table
+    _FALLBACK_AVAILABLE = True
+except ImportError:
+    _FALLBACK_AVAILABLE = False
+
+# 对外暴露：GBK 模式是否可用（系统或回退表任一可用即可）
+GBK_AVAILABLE = SYSTEM_GBK_AVAILABLE or _FALLBACK_AVAILABLE
+
+# 标记当前使用的 GBK 来源
+GBK_SOURCE = (
+    "system" if SYSTEM_GBK_AVAILABLE
+    else ("fallback_table" if _FALLBACK_AVAILABLE else "none")
+)
 
 
-def char_to_gbk_decimal(ch: str) -> int:
+def char_to_gbk_decimal(ch: str):
     """把单个字符转换为 GBK 编码的十进制整数。
 
     GBK 用双字节表示中文字符，把两个字节拼成一个整数。
     例如 "中" -> b'\\xd6\\xd0' -> 0xD6D0 -> 54992
-    非 GBK 字符（如 ASCII）会抛出异常，调用方需自行处理。
+    ASCII 字符（单字节）返回字节值（0-127）。
+    无法用 GBK 编码的字符返回 None。
     """
-    raw = ch.encode("gbk")
-    if len(raw) == 1:
-        # ASCII 字符直接返回字节值（0-127），Alt 码一般用不上
-        return raw[0]
-    # 多字节拼成一个大整数：高位字节在前
-    value = 0
-    for byte in raw:
-        value = (value << 8) | byte
-    return value
+    # 优先用系统 GBK
+    if SYSTEM_GBK_AVAILABLE:
+        try:
+            raw = ch.encode("gbk")
+            if len(raw) == 1:
+                return raw[0]
+            value = 0
+            for byte in raw:
+                value = (value << 8) | byte
+            return value
+        except (UnicodeEncodeError, LookupError):
+            return None
+    # 回退到内置表
+    if _FALLBACK_AVAILABLE:
+        return _gbk_table.char_to_gbk_decimal(ch)
+    return None
 
 
 def char_to_unicode_decimal(ch: str) -> int:
@@ -53,7 +81,7 @@ def char_to_unicode_decimal(ch: str) -> int:
 def text_to_gbk_sequences(text: str):
     """把整段文本转换成每个字符的 GBK 十进制编码列表。
 
-    无法用 GBK 编码的字符会被替换成问号占位并记录。
+    无法用 GBK 编码的字符会被记录到 skipped 列表。
     返回 (sequences, skipped) 二元组：
       sequences: [{char, code}] 每个字符及其十进制编码
       skipped:   无法编码的字符列表
@@ -65,12 +93,12 @@ def text_to_gbk_sequences(text: str):
             # 控制字符直接保留，打字时映射成对应按键
             sequences.append({"char": ch, "code": None, "control": True})
             continue
-        try:
-            code = char_to_gbk_decimal(ch)
-            sequences.append({"char": ch, "code": code, "control": False})
-        except (UnicodeEncodeError, LookupError):
+        code = char_to_gbk_decimal(ch)
+        if code is None:
             skipped.append(ch)
             sequences.append({"char": ch, "code": None, "control": False})
+        else:
+            sequences.append({"char": ch, "code": code, "control": False})
     return sequences, skipped
 
 
@@ -102,8 +130,8 @@ def encode_text(text: str, encoding: str):
     if encoding == "gbk":
         if not GBK_AVAILABLE:
             raise RuntimeError(
-                "当前 Python 环境不支持 GBK 编码。\n"
-                "请安装完整版 Python 或 _codecs_cn 模块，或改用 Unicode 编码方案。"
+                "GBK 编码不可用：Python 内置 GBK 不支持，且内置回退表缺失。\n"
+                "请改用 Unicode 编码方案。"
             )
         return text_to_gbk_sequences(text)
     if encoding == "unicode":
