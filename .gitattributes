@@ -1,0 +1,6 @@
+# 强制 shell 脚本和 Python 文件使用 LF 换行
+# 避免 Windows 上的 CRLF 导致 Linux 上执行报错（bad interpreter）
+*.sh   text eol=lf
+*.py   text eol=lf
+*.html text eol=lf
+*.txt  text eol=lf
