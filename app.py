@@ -37,6 +37,82 @@ HID_DEVICE = os.environ.get("HID_DEVICE", "/dev/hidg0")
 KEY_DELAY = float(os.environ.get("KEY_DELAY", "0.05"))
 ALT_RELEASE_DELAY = float(os.environ.get("ALT_RELEASE_DELAY", "0.08"))
 
+
+def _detect_hid_keyboard():
+    """自动识别 HID 键盘设备。
+
+    遍历 /dev/hidg*，通过 /sys/class/hidg/<name>/protocol 判断设备类型：
+      protocol=1 -> 键盘
+      protocol=2 -> 鼠标
+    返回找到的第一个键盘设备路径，找不到返回 None。
+    """
+    try:
+        import glob
+        for dev in sorted(glob.glob("/dev/hidg*")):
+            if not os.path.exists(dev):
+                continue
+            name = os.path.basename(dev)
+            proto_file = f"/sys/class/hidg/{name}/protocol"
+            try:
+                with open(proto_file, "r") as f:
+                    proto = f.read().strip()
+                if proto == "1":
+                    return dev
+            except (OSError, IOError):
+                continue
+    except Exception:
+        pass
+    return None
+
+
+def _resolve_hid_device():
+    """解析实际使用的 HID 设备路径。
+
+    1. 如果 HID_DEVICE 环境变量显式指定且存在，直接用
+    2. 否则尝试自动识别键盘设备
+    3. 都不行就回退到默认 /dev/hidg0
+    """
+    env_device = os.environ.get("HID_DEVICE", "")
+    # 如果用户显式指定了非默认值，尊重用户选择
+    if env_device and env_device != "/dev/hidg0":
+        return env_device
+    # 默认值时尝试自动识别
+    auto = _detect_hid_keyboard()
+    if auto:
+        return auto
+    return HID_DEVICE
+
+
+# 实际使用的 HID 设备（启动时解析一次）
+HID_DEVICE = _resolve_hid_device()
+
+
+def _get_device_protocol(device):
+    """读取 HID 设备的 protocol（1=键盘, 2=鼠标）。"""
+    if not device:
+        return None
+    name = os.path.basename(device)
+    proto_file = f"/sys/class/hidg/{name}/protocol"
+    try:
+        with open(proto_file, "r") as f:
+            return f.read().strip()
+    except (OSError, IOError):
+        return None
+
+
+def _list_all_hid_devices():
+    """列出所有 /dev/hidg* 设备及其类型。"""
+    import glob
+    result = []
+    for dev in sorted(glob.glob("/dev/hidg*")):
+        if not os.path.exists(dev):
+            continue
+        proto = _get_device_protocol(dev)
+        type_desc = {"1": "keyboard", "2": "mouse"}.get(proto, "unknown")
+        result.append({"path": dev, "protocol": proto, "type": type_desc})
+    return result
+
+
 # ---- 状态 ----
 _typing_lock = threading.Lock()
 _stop_event = threading.Event()
@@ -134,6 +210,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_file(os.path.join(TEMPLATE_DIR, "index.html"),
                             "text/html; charset=utf-8")
         elif path == "/api/health":
+            proto = _get_device_protocol(HID_DEVICE)
+            type_desc = {"1": "keyboard", "2": "mouse"}.get(proto, "unknown")
             self._send_json(200, {
                 "ok": True,
                 "busy": _typing_busy["value"],
@@ -143,11 +221,15 @@ class Handler(BaseHTTPRequestHandler):
                 "last_error": _typing_busy["last_error"],
                 "device": HID_DEVICE,
                 "device_exists": os.path.exists(HID_DEVICE),
+                "device_type": type_desc,
+                "all_devices": _list_all_hid_devices(),
                 "gbk_available": GBK_AVAILABLE,
                 "gbk_source": GBK_SOURCE,
                 "system_gbk": SYSTEM_GBK_AVAILABLE,
             })
         elif path == "/api/config":
+            proto = _get_device_protocol(HID_DEVICE)
+            type_desc = {"1": "keyboard", "2": "mouse"}.get(proto, "unknown")
             self._send_json(200, {
                 "ok": True,
                 "server": {"host": HOST, "port": PORT},
@@ -157,6 +239,8 @@ class Handler(BaseHTTPRequestHandler):
                 },
                 "device": HID_DEVICE,
                 "device_exists": os.path.exists(HID_DEVICE),
+                "device_type": type_desc,
+                "all_devices": _list_all_hid_devices(),
                 "gbk_available": GBK_AVAILABLE,
                 "gbk_source": GBK_SOURCE,
                 "system_gbk": SYSTEM_GBK_AVAILABLE,
@@ -225,7 +309,12 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     _log(f"ChinesePrinter 启动")
     _log(f"  监听: {HOST}:{PORT}")
-    _log(f"  HID 设备: {HID_DEVICE} (存在: {os.path.exists(HID_DEVICE)})")
+    _log(f"  HID 设备: {HID_DEVICE} (存在: {os.path.exists(HID_DEVICE)}, 类型: {_get_device_protocol(HID_DEVICE) or '未知'})")
+    all_devs = _list_all_hid_devices()
+    if len(all_devs) > 1:
+        _log(f"  发现 {len(all_devs)} 个 HID 设备:")
+        for d in all_devs:
+            _log(f"    {d['path']} -> {d['type']}")
     gbk_desc = f"可用 (来源: {GBK_SOURCE})"
     if not GBK_AVAILABLE:
         gbk_desc = "不可用"

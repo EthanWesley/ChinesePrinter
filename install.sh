@@ -92,9 +92,58 @@ else
     fi
 fi
 
-# 检查 HID 设备
+# 检查 HID 设备（支持自动识别键盘设备）
+detect_hid_keyboard() {
+    # 自动识别：遍历 /dev/hidg*，通过 /sys/class/hidg/<name>/protocol 判断
+    # protocol=1 -> 键盘, protocol=2 -> 鼠标
+    if [ -d /sys/class/hidg ]; then
+        for dev in /dev/hidg*; do
+            [ -e "$dev" ] || continue
+            name="${dev#/dev/}"
+            proto_file="/sys/class/hidg/${name}/protocol"
+            if [ -r "$proto_file" ]; then
+                proto=$(cat "$proto_file" 2>/dev/null)
+                case "$proto" in
+                    1)
+                        echo "$dev"
+                        return 0
+                        ;;
+                esac
+            fi
+        done
+    fi
+    # 回退：默认 /dev/hidg0
+    [ -e /dev/hidg0 ] && echo "/dev/hidg0" && return 0
+    return 1
+}
+
+# 如果用户没显式指定 HID 设备（仍是默认值），尝试自动识别
+if [ "$HID_DEVICE" = "/dev/hidg0" ]; then
+    info "尝试自动识别 HID 键盘设备..."
+    AUTO_HID=$(detect_hid_keyboard)
+    if [ -n "$AUTO_HID" ]; then
+        HID_DEVICE="$AUTO_HID"
+        ok "自动识别到键盘设备: $HID_DEVICE"
+    else
+        warn "未自动识别到 HID 键盘设备"
+    fi
+fi
+
 if [ -e "$HID_DEVICE" ]; then
-    ok "HID 设备: $HID_DEVICE (存在)"
+    # 显示设备协议类型
+    name="${HID_DEVICE#/dev/}"
+    proto_file="/sys/class/hidg/${name}/protocol"
+    if [ -r "$proto_file" ]; then
+        proto=$(cat "$proto_file" 2>/dev/null)
+        case "$proto" in
+            1) proto_desc="键盘" ;;
+            2) proto_desc="鼠标" ;;
+            *) proto_desc="未知($proto)" ;;
+        esac
+        ok "HID 设备: $HID_DEVICE (类型: $proto_desc)"
+    else
+        ok "HID 设备: $HID_DEVICE (存在)"
+    fi
 else
     warn "HID 设备 $HID_DEVICE 不存在"
     warn "可能原因:"
@@ -103,13 +152,30 @@ else
     warn "  3. USB 线未连接到目标电脑"
     echo ""
     info "搜索可能的 HID 设备..."
-    for dev in /dev/hidg*; do
-        if [ -e "$dev" ]; then
-            echo "    发现: $dev"
-        fi
-    done 2>/dev/null || true
+    if [ -d /sys/class/hidg ]; then
+        for dev in /dev/hidg*; do
+            [ -e "$dev" ] || continue
+            name="${dev#/dev/}"
+            proto_file="/sys/class/hidg/${name}/protocol"
+            proto_desc="未知"
+            if [ -r "$proto_file" ]; then
+                proto=$(cat "$proto_file" 2>/dev/null)
+                case "$proto" in
+                    1) proto_desc="键盘" ;;
+                    2) proto_desc="鼠标" ;;
+                    *) proto_desc="未知($proto)" ;;
+                esac
+            fi
+            echo "    发现: $dev (类型: $proto_desc)"
+        done 2>/dev/null || true
+    else
+        for dev in /dev/hidg*; do
+            [ -e "$dev" ] && echo "    发现: $dev"
+        done 2>/dev/null || true
+    fi
     echo ""
     warn "服务仍会安装，但打字功能在 HID 设备可用前无法工作"
+    warn "确认后可重新运行: sudo sh $0 $APP_PORT /dev/hidgN"
 fi
 
 # 检查 init 系统
@@ -364,6 +430,6 @@ printf "${YELLOW}  提示:${NC}\n"
 echo "  1. 确保目标电脑 NumLock 已开启（Alt 码需用小键盘）"
 echo "  2. GBK 模式要求目标电脑使用中文 Windows（GBK 代码页）"
 echo "  3. Unicode 模式在大多数现代 Windows 上可用"
-echo "  4. 如果 HID 设备路径不是 /dev/hidg0，重新运行:"
-echo "     sudo sh $0 $APP_PORT /dev/hidg1"
+echo "  4. 如果 HID 设备路径不是 $HID_DEVICE，重新运行:"
+echo "     sudo sh $0 $APP_PORT /dev/hidgN"
 line

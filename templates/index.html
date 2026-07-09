@@ -206,6 +206,7 @@
     <div class="card-title">设备信息</div>
     <div class="info-grid" id="infoGrid">
       <div class="info-item"><div class="k">HID 设备</div><div class="v" id="infoDevice">-</div></div>
+      <div class="info-item"><div class="k">设备类型</div><div class="v" id="infoDeviceType">-</div></div>
       <div class="info-item"><div class="k">设备状态</div><div class="v" id="infoDeviceOk">-</div></div>
       <div class="info-item"><div class="k">GBK 编码</div><div class="v" id="infoGbk" title="">-</div></div>
       <div class="info-item"><div class="k">监听端口</div><div class="v" id="infoPort">-</div></div>
@@ -293,8 +294,27 @@ async function loadConfig() {
   const r = await api("/api/config");
   if (!r.ok) return;
   $("infoDevice").textContent = r.device;
+  const typeMap = {keyboard: "键盘", mouse: "鼠标", unknown: "未知"};
+  $("infoDeviceType").textContent = typeMap[r.device_type] || r.device_type || "-";
+  const typeOk = r.device_type === "keyboard";
+  $("infoDeviceType").className = "v " + (typeOk ? "ok" : (r.device_exists ? "bad" : ""));
+  if (!typeOk && r.device_exists) {
+    $("infoDeviceType").title = "当前设备不是键盘类型！请检查 HID_DEVICE 配置";
+  } else {
+    $("infoDeviceType").title = "";
+  }
   $("infoDeviceOk").textContent = r.device_exists ? "已连接" : "未找到";
   $("infoDeviceOk").className = "v " + (r.device_exists ? "ok" : "bad");
+
+  // 如果有多个 HID 设备，在日志中列出
+  if (r.all_devices && r.all_devices.length > 1) {
+    const devs = r.all_devices.map(d => `${d.path}(${typeMap[d.type] || d.type})`).join(", ");
+    log("发现 " + r.all_devices.length + " 个 HID 设备: " + devs);
+  }
+  // 如果当前设备不是键盘类型，警告
+  if (r.device_exists && r.device_type && r.device_type !== "keyboard") {
+    log("警告：当前 HID 设备类型是 " + typeMap[r.device_type] + "，不是键盘！打字功能无法工作", "err");
+  }
   $("infoGbk").textContent = r.gbk_available ? ("可用 (" + (r.gbk_source || "?") + ")") : "不可用";
   $("infoGbk").className = "v " + (r.gbk_available ? "ok" : "bad");
   $("infoGbk").title = r.gbk_available
