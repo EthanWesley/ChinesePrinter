@@ -146,6 +146,41 @@
   }
   .badge.ok { background: rgba(62, 207, 142, 0.15); color: var(--green); }
   .badge.bad { background: rgba(255, 92, 92, 0.15); color: var(--red); }
+
+  /* 延时设置 */
+  .settings-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+  }
+  @media (max-width: 600px) { .settings-row { grid-template-columns: 1fr; } }
+  .setting-item { display: flex; flex-direction: column; gap: 8px; }
+  .setting-head {
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .setting-value {
+    font-size: 14px; font-weight: 600; color: var(--accent);
+    font-family: "Consolas", monospace; min-width: 70px; text-align: right;
+  }
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 6px; border-radius: 3px;
+    background: var(--card-2); outline: none; cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent); cursor: pointer;
+    border: 2px solid var(--card); transition: transform 0.15s;
+  }
+  input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+  input[type="range"]::-moz-range-thumb {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--accent); cursor: pointer; border: 2px solid var(--card);
+  }
+  .setting-desc { font-size: 11px; color: var(--muted); line-height: 1.5; }
+  .setting-desc code {
+    background: var(--card-2); padding: 1px 6px; border-radius: 4px;
+    color: var(--accent); font-size: 11px;
+  }
 </style>
 </head>
 <body>
@@ -192,6 +227,44 @@
         <span id="progressLabel">准备中…</span>
         <span id="progressNum">0 / 0</span>
       </div>
+    </div>
+  </div>
+
+  <!-- 打字延时设置 -->
+  <div class="card">
+    <div class="card-title">
+      <span>打字延时设置</span>
+      <span id="settingsStatus" class="tip">未保存</span>
+    </div>
+    <div class="settings-row">
+      <div class="setting-item">
+        <div class="setting-head">
+          <label class="field-label">按键间隔（每步按键之间的延时）</label>
+          <span class="setting-value" id="keyDelayValue">0.050 s</span>
+        </div>
+        <input type="range" id="keyDelaySlider" min="0" max="500" step="5" value="50">
+        <div class="setting-desc">
+          范围: <code id="keyDelayRange">0 ~ 1.000 s</code> ·
+          值越小打字越快，但太快可能丢键
+        </div>
+      </div>
+
+      <div class="setting-item">
+        <div class="setting-head">
+          <label class="field-label">Alt 释放延时（松开 Alt 前的等待）</label>
+          <span class="setting-value" id="altDelayValue">0.080 s</span>
+        </div>
+        <input type="range" id="altDelaySlider" min="0" max="1000" step="10" value="80">
+        <div class="setting-desc">
+          范围: <code id="altDelayRange">0 ~ 2.000 s</code> ·
+          太短可能导致字符未被目标电脑识别
+        </div>
+      </div>
+    </div>
+    <div class="controls">
+      <button id="saveSettingsBtn" class="secondary">保存延时设置</button>
+      <button id="resetSettingsBtn" class="secondary">恢复默认</button>
+      <span class="tip" id="settingsTip"></span>
     </div>
   </div>
 
@@ -324,6 +397,9 @@ async function loadConfig() {
   $("infoDelay").textContent = r.typing.key_delay + " s";
   $("infoAltDelay").textContent = r.typing.alt_release_delay + " s";
 
+  // 初始化延时滑块（来自服务端当前值）
+  initDelaySliders(r.typing);
+
   // GBK 始终可用（有回退表），无需切换。
   // 仅当日志需要提示来源时显示
   if (r.gbk_available && r.gbk_source === "fallback_table") {
@@ -425,6 +501,122 @@ async function pollProgress() {
     }
   } catch { /* 忽略瞬时错误 */ }
 }
+
+// ---------- 延时设置 ----------
+const DEFAULT_KEY_DELAY = 0.05;
+const DEFAULT_ALT_DELAY = 0.08;
+let _delayRanges = { key: {min: 0, max: 1}, alt: {min: 0, max: 2} };
+let _settingsDirty = false;
+
+// 秒 <-> 滑块整数值 的转换
+// 滑块用毫秒整数（0~500 表示 0~0.500s，0~1000 表示 0~1.000s）
+function secToSlider(sec, which) {
+  const maxSec = which === "key" ? _delayRanges.key.max : _delayRanges.alt.max;
+  // 滑块 max 值 = maxSec * 1000，step = 5 或 10
+  return Math.round(sec * 1000);
+}
+function sliderToSec(val) {
+  return parseInt(val, 10) / 1000;
+}
+
+function initDelaySliders(typing) {
+  // 保存范围
+  _delayRanges.key = {
+    min: typing.key_delay_min ?? 0,
+    max: typing.key_delay_max ?? 1,
+  };
+  _delayRanges.alt = {
+    min: typing.alt_delay_min ?? 0,
+    max: typing.alt_delay_max ?? 2,
+  };
+
+  // 设置滑块范围
+  const keySlider = $("keyDelaySlider");
+  const altSlider = $("altDelaySlider");
+  keySlider.min = _delayRanges.key.min * 1000;
+  keySlider.max = _delayRanges.key.max * 1000;
+  keySlider.step = 5;
+  altSlider.min = _delayRanges.alt.min * 1000;
+  altSlider.max = _delayRanges.alt.max * 1000;
+  altSlider.step = 10;
+
+  // 设置范围文案
+  $("keyDelayRange").textContent = _delayRanges.key.min.toFixed(3) + " ~ " + _delayRanges.key.max.toFixed(3) + " s";
+  $("altDelayRange").textContent = _delayRanges.alt.min.toFixed(3) + " ~ " + _delayRanges.alt.max.toFixed(3) + " s";
+
+  // 设置当前值
+  keySlider.value = secToSlider(typing.key_delay, "key");
+  altSlider.value = secToSlider(typing.alt_release_delay, "alt");
+  updateDelayDisplay();
+  _settingsDirty = false;
+  updateSettingsStatus();
+}
+
+function updateDelayDisplay() {
+  const kVal = sliderToSec($("keyDelaySlider").value);
+  const aVal = sliderToSec($("altDelaySlider").value);
+  $("keyDelayValue").textContent = kVal.toFixed(3) + " s";
+  $("altDelayValue").textContent = aVal.toFixed(3) + " s";
+  // 同步更新设备信息卡片
+  $("infoDelay").textContent = kVal.toFixed(3) + " s";
+  $("infoAltDelay").textContent = aVal.toFixed(3) + " s";
+}
+
+function updateSettingsStatus() {
+  const status = $("settingsStatus");
+  const saveBtn = $("saveSettingsBtn");
+  if (_settingsDirty) {
+    status.textContent = "未保存的修改";
+    status.style.color = "var(--orange)";
+    saveBtn.disabled = false;
+  } else {
+    status.textContent = "已保存";
+    status.style.color = "var(--green)";
+    saveBtn.disabled = true;
+  }
+}
+
+// 滑块拖动事件
+$("keyDelaySlider").addEventListener("input", () => {
+  updateDelayDisplay();
+  _settingsDirty = true;
+  updateSettingsStatus();
+});
+$("altDelaySlider").addEventListener("input", () => {
+  updateDelayDisplay();
+  _settingsDirty = true;
+  updateSettingsStatus();
+});
+
+// 保存设置
+$("saveSettingsBtn").addEventListener("click", async () => {
+  const keyDelay = sliderToSec($("keyDelaySlider").value);
+  const altDelay = sliderToSec($("altDelaySlider").value);
+  log(`保存延时设置: 按键间隔=${keyDelay.toFixed(3)}s, Alt释放=${altDelay.toFixed(3)}s`);
+  const r = await api("/api/settings", "POST", {
+    key_delay: keyDelay,
+    alt_release_delay: altDelay,
+  });
+  if (r.ok) {
+    _settingsDirty = false;
+    updateSettingsStatus();
+    log("延时设置已保存，下次打字生效", "ok");
+    $("settingsTip").textContent = "";
+  } else {
+    log("保存失败: " + r.msg, "err");
+    $("settingsTip").textContent = r.msg;
+  }
+});
+
+// 恢复默认
+$("resetSettingsBtn").addEventListener("click", () => {
+  $("keyDelaySlider").value = secToSlider(DEFAULT_KEY_DELAY, "key");
+  $("altDelaySlider").value = secToSlider(DEFAULT_ALT_DELAY, "alt");
+  updateDelayDisplay();
+  _settingsDirty = true;
+  updateSettingsStatus();
+  log("已恢复默认值（未保存，请点击保存）");
+});
 
 // ---------- 启动 ----------
 updateEncodingTip();

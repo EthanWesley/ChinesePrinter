@@ -34,8 +34,20 @@ TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
 HOST = os.environ.get("APP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("APP_PORT", "8848"))
 HID_DEVICE = os.environ.get("HID_DEVICE", "/dev/hidg0")
-KEY_DELAY = float(os.environ.get("KEY_DELAY", "0.05"))
-ALT_RELEASE_DELAY = float(os.environ.get("ALT_RELEASE_DELAY", "0.08"))
+
+# 延时参数：可运行时修改（通过 /api/settings 接口）
+# 用 dict 包装以便在闭包/函数中修改
+_settings = {
+    "key_delay": float(os.environ.get("KEY_DELAY", "0.05")),
+    "alt_release_delay": float(os.environ.get("ALT_RELEASE_DELAY", "0.08")),
+}
+_settings_lock = threading.Lock()
+
+# 允许的延时范围（秒）
+KEY_DELAY_MIN = 0.0
+KEY_DELAY_MAX = 1.0
+ALT_DELAY_MIN = 0.0
+ALT_DELAY_MAX = 2.0
 
 
 def _detect_hid_keyboard():
@@ -151,7 +163,11 @@ def _do_type(text, encoding):
             _log(f"以下字符无法用 {encoding} 编码，已跳过: {''.join(skipped)}", "warn")
 
         try:
-            kb = HidKeyboard(HID_DEVICE, KEY_DELAY, ALT_RELEASE_DELAY)
+            # 读取最新延时设置（开始打字时快照，打字中调整下次生效）
+            with _settings_lock:
+                cur_key_delay = _settings["key_delay"]
+                cur_alt_delay = _settings["alt_release_delay"]
+            kb = HidKeyboard(HID_DEVICE, cur_key_delay, cur_alt_delay)
             kb.open()
             for idx, item in enumerate(sequences):
                 if _stop_event.is_set():
@@ -234,8 +250,12 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True,
                 "server": {"host": HOST, "port": PORT},
                 "typing": {
-                    "key_delay": KEY_DELAY,
-                    "alt_release_delay": ALT_RELEASE_DELAY,
+                    "key_delay": _settings["key_delay"],
+                    "alt_release_delay": _settings["alt_release_delay"],
+                    "key_delay_min": KEY_DELAY_MIN,
+                    "key_delay_max": KEY_DELAY_MAX,
+                    "alt_delay_min": ALT_DELAY_MIN,
+                    "alt_delay_max": ALT_DELAY_MAX,
                 },
                 "device": HID_DEVICE,
                 "device_exists": os.path.exists(HID_DEVICE),
@@ -244,6 +264,17 @@ class Handler(BaseHTTPRequestHandler):
                 "gbk_available": GBK_AVAILABLE,
                 "gbk_source": GBK_SOURCE,
                 "system_gbk": SYSTEM_GBK_AVAILABLE,
+            })
+        elif path == "/api/settings":
+            # GET 获取当前延时设置
+            self._send_json(200, {
+                "ok": True,
+                "key_delay": _settings["key_delay"],
+                "alt_release_delay": _settings["alt_release_delay"],
+                "key_delay_min": KEY_DELAY_MIN,
+                "key_delay_max": KEY_DELAY_MAX,
+                "alt_delay_min": ALT_DELAY_MIN,
+                "alt_delay_max": ALT_DELAY_MAX,
             })
         else:
             self._send_json(404, {"ok": False, "msg": "路径不存在"})
@@ -255,8 +286,64 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/stop":
             _stop_event.set()
             self._send_json(200, {"ok": True, "msg": "已请求停止打字"})
+        elif path == "/api/settings":
+            self._handle_settings()
         else:
             self._send_json(404, {"ok": False, "msg": "路径不存在"})
+
+    def _handle_settings(self):
+        """POST /api/settings：更新延时参数。"""
+        length = int(self.headers.get("Content-Length", 0))
+        raw = self.rfile.read(length) if length > 0 else b""
+        try:
+            data = json.loads(raw) if raw else {}
+        except (ValueError, TypeError):
+            self._send_json(400, {"ok": False, "msg": "请求体不是合法 JSON"})
+            return
+
+        updated = {}
+        errors = []
+
+        # 解析 key_delay
+        if "key_delay" in data:
+            try:
+                v = float(data["key_delay"])
+                if v < KEY_DELAY_MIN or v > KEY_DELAY_MAX:
+                    errors.append(f"key_delay 超出范围 [{KEY_DELAY_MIN}, {KEY_DELAY_MAX}]")
+                else:
+                    updated["key_delay"] = v
+            except (ValueError, TypeError):
+                errors.append("key_delay 不是合法数字")
+
+        # 解析 alt_release_delay
+        if "alt_release_delay" in data:
+            try:
+                v = float(data["alt_release_delay"])
+                if v < ALT_DELAY_MIN or v > ALT_DELAY_MAX:
+                    errors.append(f"alt_release_delay 超出范围 [{ALT_DELAY_MIN}, {ALT_DELAY_MAX}]")
+                else:
+                    updated["alt_release_delay"] = v
+            except (ValueError, TypeError):
+                errors.append("alt_release_delay 不是合法数字")
+
+        if errors:
+            self._send_json(400, {"ok": False, "msg": "; ".join(errors)})
+            return
+
+        if not updated:
+            self._send_json(400, {"ok": False, "msg": "未提供可更新字段（key_delay / alt_release_delay）"})
+            return
+
+        with _settings_lock:
+            _settings.update(updated)
+
+        _log(f"延时设置已更新: {updated}")
+        self._send_json(200, {
+            "ok": True,
+            "msg": "设置已更新",
+            "key_delay": _settings["key_delay"],
+            "alt_release_delay": _settings["alt_release_delay"],
+        })
 
     def _handle_type(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -319,7 +406,7 @@ def main():
     if not GBK_AVAILABLE:
         gbk_desc = "不可用"
     _log(f"  GBK 编码: {gbk_desc}")
-    _log(f"  按键间隔: {KEY_DELAY}s, Alt 释放延迟: {ALT_RELEASE_DELAY}s")
+    _log(f"  按键间隔: {_settings['key_delay']}s, Alt 释放延迟: {_settings['alt_release_delay']}s")
 
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     try:
