@@ -1,8 +1,10 @@
 #!/bin/sh
 # ============================================================================
-# ChinesePrinter 远程一键安装脚本（GitHub 版）
+# ChinesePrinter 远程一键安装/更新脚本（GitHub 版）
 #
-# 一行命令安装（国内推荐用加速器前缀）：
+# 同一条命令既能全新安装，也能自动更新（已安装时保留配置，备份旧代码）
+#
+# 一行命令安装/更新（国内推荐用加速器前缀）：
 #
 #   # 方式1：直接访问 GitHub（网络好时）
 #   curl -fsSL https://raw.githubusercontent.com/EthanWesley/ChinesePrinter/main/remote_install.sh | sudo sh
@@ -16,8 +18,13 @@
 # 本脚本会：
 #   1. 下载项目代码（tarball，无需 git）
 #   2. 解压到临时目录
-#   3. 执行项目内的 install.sh
+#   3. 执行项目内的 install.sh（自动识别安装/更新模式）
 #   4. 清理临时文件
+#
+# 更新行为：
+#   - 首次运行 -> 全新安装，创建配置文件和开机自启
+#   - 再次运行 -> 自动更新，保留现有配置，备份旧代码到 .backup-* 目录
+#   - 传参数时 -> 用新参数覆盖配置（如改端口或 HID 设备）
 # ============================================================================
 
 set -e
@@ -46,9 +53,15 @@ err()   { printf "${RED}[ERROR]${NC} %s\n" "$1"; }
 line()  { printf "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"; }
 
 line
-printf "${CYAN}  ChinesePrinter 远程安装${NC}\n"
+printf "${CYAN}  ChinesePrinter 远程安装/更新${NC}\n"
 printf "  来源: GitHub ${GITHUB_USER}/${GITHUB_REPO} (分支: ${GITHUB_BRANCH})\n"
 [ -n "$MIRROR" ] && printf "  加速: ${MIRROR}\n"
+# 预检测是否已安装
+if [ -d "/opt/chinese-printer" ] && [ -f "/opt/chinese-printer/app.py" ]; then
+    printf "  模式: ${YELLOW}更新现有安装${NC}\n"
+else
+    printf "  模式: ${CYAN}全新安装${NC}\n"
+fi
 line
 
 # ---- 检查 root ----

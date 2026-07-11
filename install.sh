@@ -1,22 +1,47 @@
 #!/bin/sh
 # ============================================================================
-# ChinesePrinter 一键安装脚本
+# ChinesePrinter 一键安装/更新脚本
 # 目标设备: Luckfox Pico KVM (RV1106G3, 单核 Cortex-A7)
 # 功能: 部署中文 Alt 码自动打字网页服务 + 开机自启
 # 用法: sudo sh install.sh [端口号] [HID设备路径]
 #   sudo sh install.sh              # 默认端口 8848, HID /dev/hidg0
 #   sudo sh install.sh 9000         # 端口 9000
 #   sudo sh install.sh 9000 /dev/hidg1
+#
+# 自动识别模式：
+#   - 首次运行（/opt/chinese-printer 不存在）-> 全新安装
+#   - 再次运行（已存在）-> 自动更新（保留现有配置，备份旧代码）
 # ============================================================================
 
 set -e
 
-# ---- 参数 ----
-APP_PORT="${1:-${APP_PORT:-8848}}"
-HID_DEVICE="${2:-${HID_DEVICE:-/dev/hidg0}}"
+# ---- 固定配置 ----
 INSTALL_DIR="/opt/chinese-printer"
 SERVICE_NAME="chinese-printer"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+ENV_FILE="$INSTALL_DIR/chinese-printer.env"
+
+# ---- 检测安装模式 ----
+IS_UPDATE=0
+if [ -d "$INSTALL_DIR" ] && [ -f "$INSTALL_DIR/app.py" ]; then
+    IS_UPDATE=1
+fi
+
+# ---- 从现有 .env 读取配置（更新模式）----
+EXISTING_PORT=""
+EXISTING_HID=""
+if [ "$IS_UPDATE" -eq 1 ] && [ -f "$ENV_FILE" ]; then
+    while IFS='=' read -r _key _val; do
+        case "$_key" in
+            APP_PORT)        EXISTING_PORT="$_val" ;;
+            HID_DEVICE)      EXISTING_HID="$_val" ;;
+        esac
+    done < "$ENV_FILE" 2>/dev/null || true
+fi
+
+# ---- 参数优先级：命令行 > 环境变量 > 现有配置 > 默认值 ----
+APP_PORT="${1:-${APP_PORT:-${EXISTING_PORT:-8848}}}"
+HID_DEVICE="${2:-${HID_DEVICE:-${EXISTING_HID:-/dev/hidg0}}}"
 
 # ---- 脚本所在目录（源文件目录）----
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -36,7 +61,13 @@ err()   { printf "${RED}[ERROR]${NC} %s\n" "$1"; }
 line()  { printf "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"; }
 
 line
-printf "${CYAN}  ChinesePrinter 一键安装${NC}\n"
+if [ "$IS_UPDATE" -eq 1 ]; then
+    printf "${YELLOW}  ChinesePrinter 更新${NC}\n"
+    printf "  模式: 更新现有安装（保留配置）\n"
+else
+    printf "${CYAN}  ChinesePrinter 全新安装${NC}\n"
+    printf "  模式: 首次安装\n"
+fi
 printf "  目标: Luckfox Pico KVM (RV1106G3)\n"
 printf "  端口: %s | HID: %s\n" "$APP_PORT" "$HID_DEVICE"
 line
@@ -188,14 +219,36 @@ else
 fi
 
 # ============================================================================
-# 2. 安装文件
+# 2. 安装文件（更新时先备份）
 # ============================================================================
 echo ""
 info "步骤 2/5: 安装文件到 $INSTALL_DIR"
 
 mkdir -p "$INSTALL_DIR/templates"
 
-# 复制 Python 文件
+# 更新模式：备份当前代码文件（不备份 .env 和 templates）
+if [ "$IS_UPDATE" -eq 1 ]; then
+    BACKUP_DIR="$INSTALL_DIR/.backup-$(date +%Y%m%d%H%M%S)"
+    mkdir -p "$BACKUP_DIR"
+    for f in app.py encoding.py hid_keyboard.py gbk_table.py; do
+        [ -f "$INSTALL_DIR/$f" ] && cp "$INSTALL_DIR/$f" "$BACKUP_DIR/$f"
+    done
+    [ -f "$INSTALL_DIR/templates/index.html" ] && {
+        mkdir -p "$BACKUP_DIR/templates"
+        cp "$INSTALL_DIR/templates/index.html" "$BACKUP_DIR/templates/index.html"
+    }
+    # 只保留最近 3 个备份
+    ls -1d "$INSTALL_DIR/.backup-"* 2>/dev/null | sort -r | tail -n +4 | while read -r old; do
+        rm -rf "$old" 2>/dev/null || true
+    done
+    ok "旧版本已备份到: $BACKUP_DIR"
+
+    # 记录更新前后版本信息
+    OLD_INFO=""
+    [ -f "$INSTALL_DIR/app.py" ] && OLD_INFO=$(grep -m1 '^__version__' "$INSTALL_DIR/app.py" 2>/dev/null || echo "")
+fi
+
+# 复制 Python 文件（覆盖）
 for f in app.py encoding.py hid_keyboard.py gbk_table.py; do
     src="$SCRIPT_DIR/$f"
     if [ ! -f "$src" ]; then
@@ -218,13 +271,38 @@ fi
 chmod 755 "$INSTALL_DIR/app.py"
 
 # ============================================================================
-# 3. 配置环境变量
+# 3. 配置环境变量（更新时保留现有配置）
 # ============================================================================
 echo ""
 info "步骤 3/5: 生成配置文件"
 
-ENV_FILE="$INSTALL_DIR/chinese-printer.env"
-cat > "$ENV_FILE" <<EOF
+if [ "$IS_UPDATE" -eq 1 ] && [ -f "$ENV_FILE" ]; then
+    # 更新模式：保留现有 .env，仅更新端口和 HID（如果用户命令行指定了新值）
+    NEED_UPDATE_ENV=0
+    CUR_PORT=$(grep -m1 '^APP_PORT=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "")
+    CUR_HID=$(grep -m1 '^HID_DEVICE=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "")
+
+    if [ -n "$1" ] && [ "$CUR_PORT" != "$APP_PORT" ]; then
+        # 用户命令行指定了新端口
+        sed -i "s/^APP_PORT=.*/APP_PORT=$APP_PORT/" "$ENV_FILE" 2>/dev/null || \
+            { cp "$ENV_FILE" "${ENV_FILE}.tmp"; sed "s/^APP_PORT=.*/APP_PORT=$APP_PORT/" "${ENV_FILE}.tmp" > "$ENV_FILE"; rm -f "${ENV_FILE}.tmp"; }
+        NEED_UPDATE_ENV=1
+    fi
+    if [ -n "$2" ] && [ "$CUR_HID" != "$HID_DEVICE" ]; then
+        # 用户命令行指定了新 HID
+        sed -i "s/^HID_DEVICE=.*/HID_DEVICE=$HID_DEVICE/" "$ENV_FILE" 2>/dev/null || \
+            { cp "$ENV_FILE" "${ENV_FILE}.tmp"; sed "s/^HID_DEVICE=.*/HID_DEVICE=$HID_DEVICE/" "${ENV_FILE}.tmp" > "$ENV_FILE"; rm -f "${ENV_FILE}.tmp"; }
+        NEED_UPDATE_ENV=1
+    fi
+
+    if [ "$NEED_UPDATE_ENV" -eq 1 ]; then
+        ok "配置已更新（端口/HID）: $ENV_FILE"
+    else
+        ok "保留现有配置: $ENV_FILE"
+    fi
+else
+    # 全新安装：创建新 .env
+    cat > "$ENV_FILE" <<EOF
 # ChinesePrinter 环境变量配置
 # 修改后重启服务生效: systemctl restart $SERVICE_NAME
 APP_HOST=0.0.0.0
@@ -233,13 +311,18 @@ HID_DEVICE=$HID_DEVICE
 KEY_DELAY=0.05
 ALT_RELEASE_DELAY=0.08
 EOF
-ok "配置文件: $ENV_FILE"
+    ok "配置文件已创建: $ENV_FILE"
+fi
 
 # ============================================================================
-# 4. 配置开机自启
+# 4. 配置开机自启（更新时确保配置同步）
 # ============================================================================
 echo ""
-info "步骤 4/5: 配置开机自启"
+if [ "$IS_UPDATE" -eq 1 ]; then
+    info "步骤 4/5: 更新服务配置"
+else
+    info "步骤 4/5: 配置开机自启"
+fi
 
 PYTHON_PATH="$(command -v "$PYTHON_BIN")"
 
@@ -271,9 +354,14 @@ WantedBy=multi-user.target
 EOF
 
     systemctl daemon-reload
-    systemctl enable "$SERVICE_NAME" 2>/dev/null
-    systemctl restart "$SERVICE_NAME"
-    ok "systemd 服务已创建并启用: $SERVICE_NAME"
+    if [ "$IS_UPDATE" -eq 1 ]; then
+        systemctl restart "$SERVICE_NAME"
+        ok "systemd 服务已重启: $SERVICE_NAME"
+    else
+        systemctl enable "$SERVICE_NAME" 2>/dev/null
+        systemctl restart "$SERVICE_NAME"
+        ok "systemd 服务已创建并启用: $SERVICE_NAME"
+    fi
 
 else
     # ---- SysVinit / BusyBox 模式 ----
@@ -339,35 +427,42 @@ EOF
 
     chmod 755 "$INIT_SCRIPT"
 
-    # 尝试不同方式启用开机自启
-    if command -v update-rc.d >/dev/null 2>&1; then
-        update-rc.d "$SERVICE_NAME" defaults 2>/dev/null
-        ok "update-rc.d 已启用开机自启"
-    elif command -v chkconfig >/dev/null 2>&1; then
-        chkconfig --add "$SERVICE_NAME" 2>/dev/null
-        ok "chkconfig 已启用开机自启"
-    else
-        # 回退到 rc.local
-        RC_LOCAL="/etc/rc.local"
-        if [ -f "$RC_LOCAL" ]; then
-            # 检查是否已存在
-            if ! grep -q "$SERVICE_NAME" "$RC_LOCAL" 2>/dev/null; then
-                # 在 exit 0 之前插入
-                sed -i "/^exit 0/i $INIT_SCRIPT start" "$RC_LOCAL" 2>/dev/null || \
-                    echo "$INIT_SCRIPT start" >> "$RC_LOCAL"
-            fi
+    # 尝试不同方式启用开机自启（更新时跳过，已配置过）
+    if [ "$IS_UPDATE" -eq 0 ]; then
+        if command -v update-rc.d >/dev/null 2>&1; then
+            update-rc.d "$SERVICE_NAME" defaults 2>/dev/null
+            ok "update-rc.d 已启用开机自启"
+        elif command -v chkconfig >/dev/null 2>&1; then
+            chkconfig --add "$SERVICE_NAME" 2>/dev/null
+            ok "chkconfig 已启用开机自启"
         else
-            echo "#!/bin/sh" > "$RC_LOCAL"
-            echo "$INIT_SCRIPT start" >> "$RC_LOCAL"
-            echo "exit 0" >> "$RC_LOCAL"
-            chmod 755 "$RC_LOCAL"
+            # 回退到 rc.local
+            RC_LOCAL="/etc/rc.local"
+            if [ -f "$RC_LOCAL" ]; then
+                if ! grep -q "$SERVICE_NAME" "$RC_LOCAL" 2>/dev/null; then
+                    sed -i "/^exit 0/i $INIT_SCRIPT start" "$RC_LOCAL" 2>/dev/null || \
+                        echo "$INIT_SCRIPT start" >> "$RC_LOCAL"
+                fi
+            else
+                echo "#!/bin/sh" > "$RC_LOCAL"
+                echo "$INIT_SCRIPT start" >> "$RC_LOCAL"
+                echo "exit 0" >> "$RC_LOCAL"
+                chmod 755 "$RC_LOCAL"
+            fi
+            ok "rc.local 已启用开机自启"
         fi
-        ok "rc.local 已启用开机自启"
+    else
+        ok "开机自启已配置（跳过）"
     fi
 
-    # 启动服务
-    "$INIT_SCRIPT" start
-    ok "init.d 服务已启动: $SERVICE_NAME"
+    # 启动/重启服务
+    if [ "$IS_UPDATE" -eq 1 ]; then
+        "$INIT_SCRIPT" restart 2>/dev/null || "$INIT_SCRIPT" start
+        ok "init.d 服务已重启: $SERVICE_NAME"
+    else
+        "$INIT_SCRIPT" start
+        ok "init.d 服务已启动: $SERVICE_NAME"
+    fi
 fi
 
 # ============================================================================
@@ -402,7 +497,12 @@ fi
 
 echo ""
 line
-printf "${GREEN}  安装完成！${NC}\n"
+if [ "$IS_UPDATE" -eq 1 ]; then
+    printf "${GREEN}  更新完成！${NC}\n"
+    [ -n "$BACKUP_DIR" ] && printf "  旧版本备份: ${YELLOW}%s${NC}\n" "$BACKUP_DIR"
+else
+    printf "${GREEN}  安装完成！${NC}\n"
+fi
 line
 echo ""
 printf "  访问地址:  ${CYAN}http://%s:%s${NC}\n" "$IP" "$APP_PORT"
@@ -430,6 +530,12 @@ printf "${YELLOW}  提示:${NC}\n"
 echo "  1. 确保目标电脑 NumLock 已开启（Alt 码需用小键盘）"
 echo "  2. GBK 模式要求目标电脑使用中文 Windows（GBK 代码页）"
 echo "  3. Unicode 模式在大多数现代 Windows 上可用"
-echo "  4. 如果 HID 设备路径不是 $HID_DEVICE，重新运行:"
-echo "     sudo sh $0 $APP_PORT /dev/hidgN"
+if [ "$IS_UPDATE" -eq 1 ]; then
+    echo "  4. 如需回滚: 从 $INSTALL_DIR/.backup-* 恢复旧文件"
+    echo "  5. 再次运行此脚本即可更新到最新版"
+else
+    echo "  4. 如果 HID 设备路径不是 $HID_DEVICE，重新运行:"
+    echo "     sudo sh $0 $APP_PORT /dev/hidgN"
+    echo "  5. 再次运行此脚本即可更新到最新版"
+fi
 line
