@@ -109,17 +109,19 @@ TARBALL_DIRECT="https://github.com/${GITHUB_USER}/${GITHUB_REPO}/archive/refs/he
 TARBALL_ALT="https://codeload.github.com/${GITHUB_USER}/${GITHUB_REPO}/tar.gz/refs/heads/${GITHUB_BRANCH}"
 
 # 加速器 URL 列表（按优先级尝试）
+# 国内设备优先用加速器，直连 GitHub 放最后
 URLS=""
 if [ -n "$MIRROR" ]; then
     # 用户指定了加速器，优先使用
     URLS="${MIRROR}${TARBALL_DIRECT}"
 fi
-# 直连 + 常用加速器（自动回退）
-URLS="${URLS} ${TARBALL_DIRECT}"
-URLS="${URLS} https://ghproxy.com/${TARBALL_DIRECT}"
+# 常用加速器优先（国内设备直连 GitHub 大概率超时）
 URLS="${URLS} https://gh-proxy.com/${TARBALL_DIRECT}"
+URLS="${URLS} https://ghproxy.com/${TARBALL_DIRECT}"
 URLS="${URLS} https://mirror.ghproxy.com/${TARBALL_DIRECT}"
 URLS="${URLS} https://ghps.cc/${TARBALL_DIRECT}"
+# 直连 GitHub 和备用地址放最后
+URLS="${URLS} ${TARBALL_DIRECT}"
 URLS="${URLS} ${TARBALL_ALT}"
 
 # ---- 下载函数 ----
@@ -171,7 +173,25 @@ fi
 info "解压项目代码..."
 EXTRACT_DIR="${TMP_DIR}/extracted"
 mkdir -p "$EXTRACT_DIR"
-tar -xzf "$TARBALL_FILE" -C "$EXTRACT_DIR" 2>&1
+
+# BusyBox tar 不支持 -z，需要用 gzip 管道或 -a 自动解压
+if ! tar -xzf "$TARBALL_FILE" -C "$EXTRACT_DIR" 2>/dev/null; then
+    # 回退方案1：gzip 解压到 stdout 再 tar 解包
+    if gzip -dc "$TARBALL_FILE" 2>/dev/null | tar -xf - -C "$EXTRACT_DIR" 2>&1; then
+        ok "解压成功 (gzip 管道)"
+    else
+        # 回退方案2：BusyBox tar 的 -a 选项（按扩展名自动解压）
+        if tar -xf "$TARBALL_FILE" -a -C "$EXTRACT_DIR" 2>&1; then
+            ok "解压成功 (BusyBox -a)"
+        else
+            err "解压失败：tar 不支持 -z，且 gzip 也不可用"
+            err "请安装 gzip: opkg install gzip 或 apt-get install gzip"
+            exit 1
+        fi
+    fi
+else
+    ok "解压成功"
+fi
 
 # 查找包含 install.sh 的项目目录
 PROJECT_DIR=""
