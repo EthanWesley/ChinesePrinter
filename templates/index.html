@@ -1,628 +1,576 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ChinesePrinter - 中文 Alt 码自动打字</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --bg: #0f1117;
-    --card: #1a1d27;
-    --card-2: #232733;
-    --border: #2e3342;
-    --text: #e6e9ef;
-    --muted: #8b91a0;
-    --accent: #4c8dff;
-    --accent-hover: #6aa1ff;
-    --green: #3ecf8e;
-    --red: #ff5c5c;
-    --orange: #ffb13e;
-  }
-  body {
-    font-family: "Microsoft YaHei", "PingFang SC", -apple-system, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    padding: 24px;
-    line-height: 1.6;
-  }
-  .wrap { max-width: 900px; margin: 0 auto; }
-  header {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
-  }
-  h1 { font-size: 22px; font-weight: 600; }
-  h1 .sub { color: var(--muted); font-size: 13px; font-weight: 400; margin-left: 8px; }
-  .status-chip {
-    font-size: 12px; padding: 4px 12px; border-radius: 999px;
-    background: var(--card-2); border: 1px solid var(--border);
-    display: inline-flex; align-items: center; gap: 6px;
-  }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-  .dot.online { background: var(--green); }
-  .dot.busy { background: var(--orange); animation: pulse 1s infinite; }
-  .dot.err { background: var(--red); }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>中文打字机 - ChinesePrinter</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0f1117;
+      --card: #1a1d27;
+      --card-2: #252836;
+      --border: #2d3142;
+      --text: #e4e6eb;
+      --muted: #8b8fa3;
+      --accent: #5b9dff;
+      --green: #3ecf8e;
+      --red: #ff5c5c;
+      --orange: #ffb547;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+    .header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
+    }
+    .header h1 { font-size: 24px; font-weight: 600; }
+    .header h1 .icon { margin-right: 8px; }
+    .header .version { font-size: 12px; color: var(--muted); }
 
-  .card {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 12px; padding: 20px; margin-bottom: 16px;
-  }
-  .card-title {
-    font-size: 14px; color: var(--muted); margin-bottom: 12px;
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .input-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
-  .field { flex: 1; min-width: 200px; }
-  .field-label {
-    font-size: 12px; color: var(--muted); margin-bottom: 6px; display: block;
-  }
-  textarea {
-    width: 100%; min-height: 200px; resize: vertical;
-    background: var(--card-2); border: 1px solid var(--border);
-    border-radius: 8px; color: var(--text); padding: 12px;
-    font-size: 15px; font-family: inherit; line-height: 1.7;
-    transition: border-color 0.2s;
-  }
-  textarea:focus { outline: none; border-color: var(--accent); }
-  select {
-    background: var(--card-2); border: 1px solid var(--border);
-    border-radius: 8px; color: var(--text); padding: 10px 12px;
-    font-size: 14px; font-family: inherit; cursor: pointer; min-width: 140px;
-  }
-  select:focus { outline: none; border-color: var(--accent); }
-  select:disabled { opacity: 0.5; }
-  .controls {
-    display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap; align-items: center;
-  }
-  button {
-    background: var(--accent); color: #fff; border: none;
-    border-radius: 8px; padding: 11px 24px; font-size: 14px;
-    font-family: inherit; cursor: pointer; transition: all 0.2s;
-    font-weight: 500;
-  }
-  button:hover:not(:disabled) { background: var(--accent-hover); }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  button.secondary {
-    background: var(--card-2); border: 1px solid var(--border); color: var(--text);
-  }
-  button.secondary:hover:not(:disabled) { border-color: var(--accent); }
-  button.danger {
-    background: var(--red);
-  }
-  button.danger:hover:not(:disabled) { background: #ff7070; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .card-title {
+      font-size: 14px; font-weight: 600; color: var(--muted);
+      margin-bottom: 16px; display: flex; justify-content: space-between;
+      align-items: center;
+    }
+    .card-title .tip { font-size: 12px; color: var(--muted); font-weight: 400; }
 
-  .progress-wrap {
-    margin-top: 14px; display: none;
-  }
-  .progress-wrap.show { display: block; }
-  .progress-bar {
-    height: 6px; background: var(--card-2); border-radius: 3px; overflow: hidden;
-  }
-  .progress-fill {
-    height: 100%; background: var(--accent); width: 0%;
-    transition: width 0.2s; border-radius: 3px;
-  }
-  .progress-text {
-    font-size: 12px; color: var(--muted); margin-top: 6px;
-    display: flex; justify-content: space-between;
-  }
+    textarea {
+      width: 100%; min-height: 120px;
+      background: var(--card-2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 12px; font-size: 16px; font-family: inherit;
+      resize: vertical; outline: none;
+      transition: border-color 0.2s;
+    }
+    textarea:focus { border-color: var(--accent); }
+    textarea::placeholder { color: var(--muted); }
 
-  .log {
-    background: var(--card-2); border: 1px solid var(--border);
-    border-radius: 8px; padding: 12px; font-size: 13px;
-    font-family: "Consolas", monospace; color: var(--muted);
-    min-height: 60px; max-height: 180px; overflow-y: auto;
-  }
-  .log .line { margin-bottom: 2px; }
-  .log .ok { color: var(--green); }
-  .log .err { color: var(--red); }
-  .log .warn { color: var(--orange); }
+    .controls {
+      display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap;
+      align-items: center;
+    }
+    button {
+      padding: 10px 20px; border: none; border-radius: 8px;
+      font-size: 14px; font-weight: 500; cursor: pointer;
+      transition: all 0.2s; font-family: inherit;
+    }
+    button.primary {
+      background: var(--accent); color: white;
+    }
+    button.primary:hover { opacity: 0.9; }
+    button.primary:disabled {
+      background: var(--card-2); color: var(--muted); cursor: not-allowed;
+    }
+    button.secondary {
+      background: var(--card-2); color: var(--text);
+      border: 1px solid var(--border);
+    }
+    button.secondary:hover { border-color: var(--accent); }
+    button.danger {
+      background: rgba(255, 92, 92, 0.15); color: var(--red);
+      border: 1px solid rgba(255, 92, 92, 0.3);
+    }
+    button.danger:hover { background: rgba(255, 92, 92, 0.25); }
 
-  .info-grid {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
-  }
-  .info-item {
-    background: var(--card-2); border: 1px solid var(--border);
-    border-radius: 8px; padding: 10px 12px;
-  }
-  .info-item .k { font-size: 11px; color: var(--muted); }
-  .info-item .v { font-size: 14px; margin-top: 2px; }
-  .info-item .v.ok { color: var(--green); }
-  .info-item .v.bad { color: var(--red); }
+    .field-group {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .field-group label { font-size: 14px; color: var(--muted); }
+    select {
+      background: var(--card-2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 12px; font-size: 14px; font-family: inherit;
+      outline: none; cursor: pointer;
+    }
+    select:focus { border-color: var(--accent); }
 
-  .tip {
-    font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.7;
-  }
-  .tip code {
-    background: var(--card-2); padding: 1px 6px; border-radius: 4px;
-    color: var(--accent); font-size: 12px;
-  }
-  .badge {
-    display: inline-block; font-size: 11px; padding: 2px 8px;
-    border-radius: 4px; margin-left: 6px;
-  }
-  .badge.ok { background: rgba(62, 207, 142, 0.15); color: var(--green); }
-  .badge.bad { background: rgba(255, 92, 92, 0.15); color: var(--red); }
+    .progress-wrap { margin-top: 16px; }
+    .progress-bar {
+      height: 6px; background: var(--card-2); border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; background: var(--accent); border-radius: 3px;
+      transition: width 0.3s; width: 0%;
+    }
+    .progress-text {
+      display: flex; justify-content: space-between;
+      margin-top: 8px; font-size: 12px; color: var(--muted);
+    }
 
-  /* 延时设置 */
-  .settings-row {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
-  }
-  @media (max-width: 600px) { .settings-row { grid-template-columns: 1fr; } }
-  .setting-item { display: flex; flex-direction: column; gap: 8px; }
-  .setting-head {
-    display: flex; justify-content: space-between; align-items: center;
-  }
-  .setting-value {
-    font-size: 14px; font-weight: 600; color: var(--accent);
-    font-family: "Consolas", monospace; min-width: 70px; text-align: right;
-  }
-  input[type="range"] {
-    -webkit-appearance: none; appearance: none;
-    width: 100%; height: 6px; border-radius: 3px;
-    background: var(--card-2); outline: none; cursor: pointer;
-  }
-  input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none; appearance: none;
-    width: 18px; height: 18px; border-radius: 50%;
-    background: var(--accent); cursor: pointer;
-    border: 2px solid var(--card); transition: transform 0.15s;
-  }
-  input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
-  input[type="range"]::-moz-range-thumb {
-    width: 18px; height: 18px; border-radius: 50%;
-    background: var(--accent); cursor: pointer; border: 2px solid var(--card);
-  }
-  .setting-desc { font-size: 11px; color: var(--muted); line-height: 1.5; }
-  .setting-desc code {
-    background: var(--card-2); padding: 1px 6px; border-radius: 4px;
-    color: var(--accent); font-size: 11px;
-  }
-</style>
+    .info-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px;
+    }
+    @media (max-width: 600px) { .info-grid { grid-template-columns: 1fr; } }
+    .info-item { display: flex; justify-content: space-between; font-size: 13px; }
+    .info-item .k { color: var(--muted); }
+    .info-item .v { color: var(--text); font-family: "Consolas", monospace; }
+    .info-item .v.ok { color: var(--green); }
+    .info-item .v.bad { color: var(--red); }
+
+    .log {
+      background: #0a0c12; border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px;
+      height: 180px; overflow-y: auto;
+      font-family: "Consolas", monospace; font-size: 12px;
+      line-height: 1.6;
+    }
+    .log-entry { color: var(--text); }
+    .log-entry.err { color: var(--red); }
+    .log-entry.ok { color: var(--green); }
+    .log-entry.warn { color: var(--orange); }
+    .log-entry .ts { color: var(--muted); margin-right: 6px; }
+
+    .settings-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+    }
+    @media (max-width: 600px) { .settings-row { grid-template-columns: 1fr; } }
+    .setting-item { display: flex; flex-direction: column; gap: 8px; }
+    .setting-head {
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .setting-value {
+      font-size: 14px; font-weight: 600; color: var(--accent);
+      font-family: "Consolas", monospace; min-width: 70px; text-align: right;
+    }
+    input[type="range"] {
+      -webkit-appearance: none; appearance: none;
+      width: 100%; height: 6px; border-radius: 3px;
+      background: var(--card-2); outline: none; cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 18px; height: 18px; border-radius: 50%;
+      background: var(--accent); cursor: pointer;
+      border: 2px solid var(--card); transition: transform 0.15s;
+    }
+    input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+    input[type="range"]::-moz-range-thumb {
+      width: 18px; height: 18px; border-radius: 50%;
+      background: var(--accent); cursor: pointer; border: 2px solid var(--card);
+    }
+    .setting-desc { font-size: 11px; color: var(--muted); line-height: 1.5; }
+    .setting-desc code {
+      background: var(--card-2); padding: 1px 6px; border-radius: 4px;
+      color: var(--accent); font-size: 11px;
+    }
+    .field-label { font-size: 13px; color: var(--text); }
+
+    .toast {
+      position: fixed; top: 20px; right: 20px;
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 20px;
+      font-size: 14px; z-index: 1000;
+      opacity: 0; transform: translateX(100%);
+      transition: all 0.3s;
+    }
+    .toast.show { opacity: 1; transform: translateX(0); }
+    .toast.err { border-color: var(--red); }
+    .toast.ok { border-color: var(--green); }
+  </style>
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <h1>
-      ChinesePrinter
-      <span class="sub">Luckfox Pico KVM 中文 Alt 码自动打字</span>
-    </h1>
-    <span class="status-chip" id="statusChip">
-      <span class="dot" id="statusDot"></span>
-      <span id="statusText">检查中…</span>
-    </span>
-  </header>
-
-  <!-- 打字区 -->
-  <div class="card">
-    <div class="card-title">
-      <span>输入要打字的中文内容</span>
-      <span id="charCount">0 字</span>
+  <div class="container">
+    <div class="header">
+      <h1><span class="icon">⌨️</span>中文打字机</h1>
+      <span class="version">Shell Edition · v2.0</span>
     </div>
-    <div class="input-row">
-      <div class="field">
-        <textarea id="textInput" placeholder="在此输入中文，点击下方「开始打字」按钮，内容会通过 USB HID 用 Alt 码自动打到 KVM 所连的目标电脑上…"></textarea>
+
+    <!-- 设备信息 -->
+    <div class="card">
+      <div class="card-title">
+        <span>设备信息</span>
+        <span class="tip" id="refreshTip">自动刷新</span>
       </div>
-      <div>
-        <label class="field-label">编码方案</label>
-        <select id="encoding">
-          <option value="gbk">GBK（十进制）</option>
-          <option value="unicode">Unicode（十进制）</option>
-        </select>
+      <div class="info-grid">
+        <div class="info-item"><div class="k">HID 设备</div><div class="v" id="infoDevice">-</div></div>
+        <div class="info-item"><div class="k">设备类型</div><div class="v" id="infoDeviceType">-</div></div>
+        <div class="info-item"><div class="k">设备状态</div><div class="v" id="infoDeviceOk">-</div></div>
+        <div class="info-item"><div class="k">服务端口</div><div class="v" id="infoPort">-</div></div>
+        <div class="info-item"><div class="k">按键间隔</div><div class="v" id="infoDelay">-</div></div>
+        <div class="info-item"><div class="k">Alt 释放延时</div><div class="v" id="infoAltDelay">-</div></div>
       </div>
     </div>
 
-    <div class="controls">
-      <button id="typeBtn">开始打字</button>
-      <button id="stopBtn" class="danger" disabled>停止打字</button>
-      <span class="tip" id="encodingTip"></span>
-    </div>
-
-    <div class="progress-wrap" id="progressWrap">
-      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-      <div class="progress-text">
-        <span id="progressLabel">准备中…</span>
-        <span id="progressNum">0 / 0</span>
+    <!-- 打字区 -->
+    <div class="card">
+      <div class="card-title">
+        <span>输入中文文本</span>
+        <span class="tip">Alt 码自动打字</span>
       </div>
-    </div>
-  </div>
-
-  <!-- 打字延时设置 -->
-  <div class="card">
-    <div class="card-title">
-      <span>打字延时设置</span>
-      <span id="settingsStatus" class="tip">未保存</span>
-    </div>
-    <div class="settings-row">
-      <div class="setting-item">
-        <div class="setting-head">
-          <label class="field-label">按键间隔（每步按键之间的延时）</label>
-          <span class="setting-value" id="keyDelayValue">0.050 s</span>
+      <textarea id="textInput" placeholder="在此输入中文，然后点击「开始打字」按钮...&#10;例如：你好世界"></textarea>
+      <div class="controls">
+        <div class="field-group">
+          <label for="encodingSelect">编码方案:</label>
+          <select id="encodingSelect">
+            <option value="gbk">GBK (中文 Windows)</option>
+            <option value="unicode">Unicode (通用)</option>
+          </select>
         </div>
-        <input type="range" id="keyDelaySlider" min="0" max="500" step="5" value="50">
-        <div class="setting-desc">
-          范围: <code id="keyDelayRange">0 ~ 1.000 s</code> ·
-          值越小打字越快，但太快可能丢键
-        </div>
+        <button id="typeBtn" class="primary">开始打字</button>
+        <button id="stopBtn" class="danger" disabled>停止</button>
       </div>
-
-      <div class="setting-item">
-        <div class="setting-head">
-          <label class="field-label">Alt 释放延时（松开 Alt 前的等待）</label>
-          <span class="setting-value" id="altDelayValue">0.080 s</span>
-        </div>
-        <input type="range" id="altDelaySlider" min="0" max="1000" step="10" value="80">
-        <div class="setting-desc">
-          范围: <code id="altDelayRange">0 ~ 2.000 s</code> ·
-          太短可能导致字符未被目标电脑识别
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-text">
+          <span id="progressLabel">准备中…</span>
+          <span id="progressNum">0 / 0</span>
         </div>
       </div>
     </div>
-    <div class="controls">
-      <button id="saveSettingsBtn" class="secondary">保存延时设置</button>
-      <button id="resetSettingsBtn" class="secondary">恢复默认</button>
-      <span class="tip" id="settingsTip"></span>
+
+    <!-- 打字延时设置 -->
+    <div class="card">
+      <div class="card-title">
+        <span>打字延时设置</span>
+        <span id="settingsStatus" class="tip">未保存</span>
+      </div>
+      <div class="settings-row">
+        <div class="setting-item">
+          <div class="setting-head">
+            <label class="field-label">按键间隔（每步按键之间的延时）</label>
+            <span class="setting-value" id="keyDelayValue">0.050 s</span>
+          </div>
+          <input type="range" id="keyDelaySlider" min="0" max="500" step="5" value="50">
+          <div class="setting-desc">
+            范围: <code id="keyDelayRange">0 ~ 1.000 s</code> ·
+            值越小打字越快，但太快可能丢键
+          </div>
+        </div>
+        <div class="setting-item">
+          <div class="setting-head">
+            <label class="field-label">Alt 释放延时（松开 Alt 前的等待）</label>
+            <span class="setting-value" id="altDelayValue">0.080 s</span>
+          </div>
+          <input type="range" id="altDelaySlider" min="0" max="1000" step="10" value="80">
+          <div class="setting-desc">
+            范围: <code id="altDelayRange">0 ~ 2.000 s</code> ·
+            太短可能导致字符未被目标电脑识别
+          </div>
+        </div>
+      </div>
+      <div class="controls">
+        <button id="saveSettingsBtn" class="secondary">保存延时设置</button>
+        <button id="resetSettingsBtn" class="secondary">恢复默认</button>
+        <span class="tip" id="settingsTip"></span>
+      </div>
+    </div>
+
+    <!-- 日志 -->
+    <div class="card">
+      <div class="card-title">
+        <span>操作日志</span>
+        <button id="clearLogBtn" class="secondary" style="padding:4px 12px;font-size:12px;">清空</button>
+      </div>
+      <div class="log" id="logBox"></div>
     </div>
   </div>
 
-  <!-- 日志 -->
-  <div class="card">
-    <div class="card-title">运行日志</div>
-    <div class="log" id="logBox"></div>
-  </div>
+  <div class="toast" id="toast"></div>
 
-  <!-- 信息 -->
-  <div class="card">
-    <div class="card-title">设备信息</div>
-    <div class="info-grid" id="infoGrid">
-      <div class="info-item"><div class="k">HID 设备</div><div class="v" id="infoDevice">-</div></div>
-      <div class="info-item"><div class="k">设备类型</div><div class="v" id="infoDeviceType">-</div></div>
-      <div class="info-item"><div class="k">设备状态</div><div class="v" id="infoDeviceOk">-</div></div>
-      <div class="info-item"><div class="k">GBK 编码</div><div class="v" id="infoGbk" title="">-</div></div>
-      <div class="info-item"><div class="k">监听端口</div><div class="v" id="infoPort">-</div></div>
-      <div class="info-item"><div class="k">按键间隔</div><div class="v" id="infoDelay">-</div></div>
-      <div class="info-item"><div class="k">Alt 释放延迟</div><div class="v" id="infoAltDelay">-</div></div>
-    </div>
-    <div class="tip">
-      <b>使用说明：</b><br>
-      1. 把 Luckfox Pico KVM 通过 USB 连到目标电脑（KVM 会枚举为 HID 键盘）<br>
-      2. 在目标电脑上把光标放到输入位置（记事本、浏览器地址栏等均可）<br>
-      3. 确保目标电脑 <b>NumLock 已开启</b>（Alt 码必须用小键盘数字）<br>
-      4. 在本页面输入中文，点击「开始打字」<br><br>
-      <b>编码原理：</b><br>
-      GBK 模式：按住 Alt + 输入 GBK 十进制码 + 松开 Alt（如 <code>"中"=54992</code>）<br>
-      Unicode 模式：按住 Alt + 输入 Unicode 十进制码点 + 松开 Alt（如 <code>"中"=20013</code>）
-    </div>
-  </div>
-</div>
+  <script>
+    // ---------- 工具函数 ----------
+    const $ = id => document.getElementById(id);
+    const logBox = $("logBox");
 
-<script>
-// ---------- 工具 ----------
-const $ = (id) => document.getElementById(id);
-const logBox = $("logBox");
-function log(msg, type) {
-  const line = document.createElement("div");
-  line.className = "line" + (type ? " " + type : "");
-  const now = new Date().toLocaleTimeString();
-  line.textContent = `[${now}] ${msg}`;
-  logBox.appendChild(line);
-  logBox.scrollTop = logBox.scrollHeight;
-}
-
-// ---------- 状态 ----------
-let typing = false;
-let pollTimer = null;
-
-function setStatus(state, text) {
-  const dot = $("statusDot");
-  dot.className = "dot " + state;
-  $("statusText").textContent = text;
-}
-
-function setTyping(busy) {
-  typing = busy;
-  $("typeBtn").disabled = busy;
-  $("stopBtn").disabled = !busy;
-  $("encoding").disabled = busy;
-  if (busy) {
-    setStatus("busy", "打字中…");
-    $("progressWrap").classList.add("show");
-  } else {
-    $("progressWrap").classList.remove("show");
-  }
-}
-
-// ---------- 编码提示 ----------
-function updateEncodingTip() {
-  const enc = $("encoding").value;
-  if (enc === "gbk") {
-    $("encodingTip").innerHTML = "GBK：Alt + GBK 十进制码（如 \"中\"=54992）";
-  } else {
-    $("encodingTip").innerHTML = "Unicode：Alt + 十进制码点（如 \"中\"=20013）";
-  }
-}
-$("encoding").addEventListener("change", updateEncodingTip);
-
-// ---------- 字数统计 ----------
-$("textInput").addEventListener("input", () => {
-  $("charCount").textContent = $("textInput").value.length + " 字";
-});
-
-// ---------- API 调用 ----------
-async function api(path, method, body) {
-  const opts = { method: method || "GET", headers: {} };
-  if (body) {
-    opts.headers["Content-Type"] = "application/json";
-    opts.body = JSON.stringify(body);
-  }
-  const resp = await fetch(path, opts);
-  return resp.json().catch(() => ({ ok: false, msg: "响应解析失败" }));
-}
-
-// ---------- 加载配置 ----------
-async function loadConfig() {
-  const r = await api("/api/config");
-  if (!r.ok) return;
-  $("infoDevice").textContent = r.device;
-  const typeMap = {keyboard: "键盘", mouse: "鼠标", unknown: "未知"};
-  $("infoDeviceType").textContent = typeMap[r.device_type] || r.device_type || "-";
-  const typeOk = r.device_type === "keyboard";
-  $("infoDeviceType").className = "v " + (typeOk ? "ok" : (r.device_exists ? "bad" : ""));
-  if (!typeOk && r.device_exists) {
-    $("infoDeviceType").title = "当前设备不是键盘类型！请检查 HID_DEVICE 配置";
-  } else {
-    $("infoDeviceType").title = "";
-  }
-  $("infoDeviceOk").textContent = r.device_exists ? "已连接" : "未找到";
-  $("infoDeviceOk").className = "v " + (r.device_exists ? "ok" : "bad");
-
-  // 如果有多个 HID 设备，在日志中列出
-  if (r.all_devices && r.all_devices.length > 1) {
-    const devs = r.all_devices.map(d => `${d.path}(${typeMap[d.type] || d.type})`).join(", ");
-    log("发现 " + r.all_devices.length + " 个 HID 设备: " + devs);
-  }
-  // 如果当前设备不是键盘类型，警告
-  if (r.device_exists && r.device_type && r.device_type !== "keyboard") {
-    log("警告：当前 HID 设备类型是 " + typeMap[r.device_type] + "，不是键盘！打字功能无法工作", "err");
-  }
-  $("infoGbk").textContent = r.gbk_available ? ("可用 (" + (r.gbk_source || "?") + ")") : "不可用";
-  $("infoGbk").className = "v " + (r.gbk_available ? "ok" : "bad");
-  $("infoGbk").title = r.gbk_available
-    ? ("来源: " + (r.gbk_source === "system" ? "Python 内置 gbk 编解码" : "内置 GBK 回退编码表"))
-    : "Python 不支持 GBK 且无回退表";
-  $("infoPort").textContent = r.server.port;
-  $("infoDelay").textContent = r.typing.key_delay + " s";
-  $("infoAltDelay").textContent = r.typing.alt_release_delay + " s";
-
-  // 初始化延时滑块（来自服务端当前值）
-  initDelaySliders(r.typing);
-
-  // GBK 始终可用（有回退表），无需切换。
-  // 仅当日志需要提示来源时显示
-  if (r.gbk_available && r.gbk_source === "fallback_table") {
-    log("Python 内置 GBK 不可用，已自动回退到内置 GBK 编码表", "warn");
-  } else if (!r.gbk_available) {
-    // 极端情况：回退表也缺失
-    $("encoding").value = "unicode";
-    updateEncodingTip();
-    const gbkOpt = $("encoding").querySelector('option[value="gbk"]');
-    if (gbkOpt) gbkOpt.disabled = true;
-    log("GBK 编码完全不可用，已切换到 Unicode", "warn");
-  }
-  // 如果设备不存在
-  if (!r.device_exists) {
-    log("HID 设备 " + r.device + " 不存在，请检查 USB gadget 配置", "err");
-  }
-}
-
-// ---------- 健康检查 ----------
-async function checkHealth() {
-  try {
-    const r = await api("/api/health");
-    if (r.ok) {
-      if (r.busy) {
-        setStatus("busy", "打字中…");
-        setTyping(true);
-        startPolling();
-      } else if (r.last_error) {
-        setStatus("err", "上次出错");
-        log("上次错误: " + r.last_error, "err");
-      } else if (!r.device_exists) {
-        setStatus("err", "HID 设备未找到");
-      } else {
-        setStatus("online", "服务就绪");
-      }
-    } else {
-      setStatus("err", "服务异常");
+    function log(msg, level) {
+      const ts = new Date().toLocaleTimeString("zh-CN", {hour12: false});
+      const entry = document.createElement("div");
+      entry.className = "log-entry" + (level ? " " + level : "");
+      entry.innerHTML = `<span class="ts">[${ts}]</span>${msg}`;
+      logBox.appendChild(entry);
+      logBox.scrollTop = logBox.scrollHeight;
+      // 限制日志条数
+      while (logBox.children.length > 200) logBox.removeChild(logBox.firstChild);
     }
-  } catch {
-    setStatus("err", "无法连接");
-  }
-}
 
-// ---------- 打字 ----------
-$("typeBtn").addEventListener("click", async () => {
-  const text = $("textInput").value;
-  const encoding = $("encoding").value;
-  if (!text.trim()) {
-    log("文本为空，无法打字", "warn");
-    return;
-  }
-  log(`开始打字：${text.length} 字，编码=${encoding}`);
-  const r = await api("/api/type", "POST", { text, encoding });
-  if (r.ok) {
-    setTyping(true);
-    startPolling();
-  } else {
-    log("打字请求失败：" + r.msg, "err");
-  }
-});
+    function toast(msg, level) {
+      const t = $("toast");
+      t.textContent = msg;
+      t.className = "toast show" + (level ? " " + level : "");
+      setTimeout(() => t.className = "toast", 2500);
+    }
 
-// ---------- 停止 ----------
-$("stopBtn").addEventListener("click", async () => {
-  log("正在停止打字…");
-  const r = await api("/api/stop", "POST");
-  if (r.ok) {
-    log("已请求停止，当前字符完成后将中止", "warn");
-  }
-});
+    async function api(path, method, body) {
+      const opts = {method: method || "GET"};
+      if (body) {
+        opts.headers = {"Content-Type": "application/json"};
+        opts.body = JSON.stringify(body);
+      }
+      try {
+        const r = await fetch(path, opts);
+        return await r.json();
+      } catch (e) {
+        return {ok: false, msg: "请求失败: " + e.message};
+      }
+    }
 
-// ---------- 轮询进度 ----------
-function startPolling() {
-  if (pollTimer) return;
-  pollTimer = setInterval(pollProgress, 400);
-}
-function stopPolling() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-}
-async function pollProgress() {
-  try {
-    const r = await api("/api/health");
-    if (!r.ok) return;
-    const pct = r.total > 0 ? Math.round(r.progress / r.total * 100) : 0;
-    $("progressFill").style.width = pct + "%";
-    $("progressLabel").textContent = typing ? "打字中…" : "已完成";
-    $("progressNum").textContent = `${r.progress} / ${r.total}`;
-    if (!r.busy) {
-      stopPolling();
-      setTyping(false);
-      if (r.last_error) {
-        setStatus("err", "打字出错");
-        log("打字出错: " + r.last_error, "err");
-      } else {
-        setStatus("online", "服务就绪");
-        if (r.total > 0) {
-          log(`打字完成：${r.progress} / ${r.total} 字`, "ok");
+    // ---------- 编码转换（前端完成） ----------
+    // GBK 编码表（通过查表实现，避免依赖后端）
+    // 这里用动态加载的方式：从后端获取 GBK 映射表
+    let GBK_TABLE = null;
+    let GBK_AVAILABLE = false;
+
+    async function loadGbkTable() {
+      try {
+        // 尝试加载 GBK 编码表（静态 JSON 文件）
+        const r = await fetch("/gbk_table.json");
+        if (r.ok) {
+          GBK_TABLE = await r.json();
+          GBK_AVAILABLE = true;
+          log("GBK 编码表已加载: " + Object.keys(GBK_TABLE).length + " 个字符", "ok");
+          return true;
+        }
+      } catch (e) {
+        // 静态文件不存在，用内置 JS 编码表
+      }
+      // 使用内置的简化 GBK 编码表（常用汉字）
+      GBK_TABLE = buildGbkTable();
+      if (GBK_TABLE) {
+        GBK_AVAILABLE = true;
+        log("使用内置 GBK 编码表: " + Object.keys(GBK_TABLE).length + " 个字符", "ok");
+        return true;
+      }
+      log("GBK 编码表不可用，请使用 Unicode 模式", "warn");
+      return false;
+    }
+
+    // 内置 GBK 编码表生成器（使用 TextEncoder + iconv 替代方案）
+    // 由于浏览器没有原生 GBK 编码，我们用预生成的映射表
+    function buildGbkTable() {
+      // 这里返回 null，实际使用时从 /gbk_table.json 加载
+      return null;
+    }
+
+    // 将中文字符串转换为 Alt 码序列
+    // 返回: [{code: 54992}, {control: "enter"}, ...]
+    function textToAltSequence(text, encoding) {
+      const items = [];
+      for (const ch of text) {
+        if (ch === "\n") {
+          items.push({control: "enter"});
+        } else if (ch === "\t") {
+          items.push({control: "tab"});
+        } else if (ch === " ") {
+          items.push({control: "space"});
+        } else if (ch === "\r") {
+          // 忽略 \r
+        } else {
+          let code = null;
+          if (encoding === "gbk" && GBK_AVAILABLE && GBK_TABLE) {
+            code = GBK_TABLE[ch];
+          }
+          if (code === null || code === undefined) {
+            // 回退到 Unicode
+            code = ch.codePointAt(0);
+          }
+          items.push({code: code});
         }
       }
+      return items;
     }
-  } catch { /* 忽略瞬时错误 */ }
-}
 
-// ---------- 延时设置 ----------
-const DEFAULT_KEY_DELAY = 0.05;
-const DEFAULT_ALT_DELAY = 0.08;
-let _delayRanges = { key: {min: 0, max: 1}, alt: {min: 0, max: 2} };
-let _settingsDirty = false;
+    // ---------- 状态管理 ----------
+    let isTyping = false;
+    let healthTimer = null;
 
-// 秒 <-> 滑块整数值 的转换
-// 滑块用毫秒整数（0~500 表示 0~0.500s，0~1000 表示 0~1.000s）
-function secToSlider(sec, which) {
-  const maxSec = which === "key" ? _delayRanges.key.max : _delayRanges.alt.max;
-  // 滑块 max 值 = maxSec * 1000，step = 5 或 10
-  return Math.round(sec * 1000);
-}
-function sliderToSec(val) {
-  return parseInt(val, 10) / 1000;
-}
+    async function checkHealth() {
+      const r = await api("/api/health");
+      $("infoDevice").textContent = r.device || "-";
+      const typeMap = {keyboard: "键盘", mouse: "鼠标", unknown: "未知"};
+      $("infoDeviceType").textContent = typeMap[r.device_type] || r.device_type || "-";
+      const typeOk = r.device_type === "keyboard";
+      $("infoDeviceType").className = "v " + (typeOk ? "ok" : (r.device_exists ? "bad" : ""));
+      $("infoDeviceOk").textContent = r.device_exists ? "已连接" : "未找到";
+      $("infoDeviceOk").className = "v " + (r.device_exists ? "ok" : "bad");
+      $("infoPort").textContent = r.port || "-";
+      $("infoDelay").textContent = (r.key_delay !== undefined ? r.key_delay.toFixed(3) : "?") + " s";
+      $("infoAltDelay").textContent = (r.alt_release_delay !== undefined ? r.alt_release_delay.toFixed(3) : "?") + " s";
 
-function initDelaySliders(typing) {
-  // 保存范围
-  _delayRanges.key = {
-    min: typing.key_delay_min ?? 0,
-    max: typing.key_delay_max ?? 1,
-  };
-  _delayRanges.alt = {
-    min: typing.alt_delay_min ?? 0,
-    max: typing.alt_delay_max ?? 2,
-  };
+      // 打字状态
+      if (r.busy && !isTyping) {
+        isTyping = true;
+        $("typeBtn").disabled = true;
+        $("stopBtn").disabled = false;
+      } else if (!r.busy && isTyping) {
+        isTyping = false;
+        $("typeBtn").disabled = false;
+        $("stopBtn").disabled = true;
+        log("打字结束", "ok");
+      }
 
-  // 设置滑块范围
-  const keySlider = $("keyDelaySlider");
-  const altSlider = $("altDelaySlider");
-  keySlider.min = _delayRanges.key.min * 1000;
-  keySlider.max = _delayRanges.key.max * 1000;
-  keySlider.step = 5;
-  altSlider.min = _delayRanges.alt.min * 1000;
-  altSlider.max = _delayRanges.alt.max * 1000;
-  altSlider.step = 10;
+      // 更新进度
+      if (r.busy) {
+        const pct = r.total > 0 ? (r.progress / r.total * 100) : 0;
+        $("progressFill").style.width = pct + "%";
+        $("progressNum").textContent = r.progress + " / " + r.total;
+        $("progressLabel").textContent = "正在打字...";
+      } else if (r.progress > 0 && r.progress >= r.total && r.total > 0) {
+        $("progressFill").style.width = "100%";
+        $("progressNum").textContent = r.progress + " / " + r.total;
+        $("progressLabel").textContent = "完成";
+      }
 
-  // 设置范围文案
-  $("keyDelayRange").textContent = _delayRanges.key.min.toFixed(3) + " ~ " + _delayRanges.key.max.toFixed(3) + " s";
-  $("altDelayRange").textContent = _delayRanges.alt.min.toFixed(3) + " ~ " + _delayRanges.alt.max.toFixed(3) + " s";
+      // 设备类型警告
+      if (r.device_exists && r.device_type && r.device_type !== "keyboard") {
+        $("infoDeviceType").title = "当前设备不是键盘类型！";
+      } else {
+        $("infoDeviceType").title = "";
+      }
+    }
 
-  // 设置当前值
-  keySlider.value = secToSlider(typing.key_delay, "key");
-  altSlider.value = secToSlider(typing.alt_release_delay, "alt");
-  updateDelayDisplay();
-  _settingsDirty = false;
-  updateSettingsStatus();
-}
+    // ---------- 打字控制 ----------
+    async function startTyping() {
+      const text = $("textInput").value;
+      if (!text) {
+        toast("请输入要打字的文本", "err");
+        return;
+      }
+      const encoding = $("encodingSelect").value;
+      if (encoding === "gbk" && !GBK_AVAILABLE) {
+        toast("GBK 编码表未加载，请使用 Unicode 模式", "err");
+        return;
+      }
+      const items = textToAltSequence(text, encoding);
+      if (items.length === 0) {
+        toast("没有可打字的内容", "err");
+        return;
+      }
+      log(`开始打字: 编码=${encoding}, 共 ${items.length} 项`);
+      const r = await api("/api/type", "POST", {encoding, items});
+      if (r.ok) {
+        toast("开始打字", "ok");
+        $("typeBtn").disabled = true;
+        $("stopBtn").disabled = false;
+        isTyping = true;
+      } else {
+        toast(r.msg || "打字失败", "err");
+        log("打字失败: " + r.msg, "err");
+      }
+    }
 
-function updateDelayDisplay() {
-  const kVal = sliderToSec($("keyDelaySlider").value);
-  const aVal = sliderToSec($("altDelaySlider").value);
-  $("keyDelayValue").textContent = kVal.toFixed(3) + " s";
-  $("altDelayValue").textContent = aVal.toFixed(3) + " s";
-  // 同步更新设备信息卡片
-  $("infoDelay").textContent = kVal.toFixed(3) + " s";
-  $("infoAltDelay").textContent = aVal.toFixed(3) + " s";
-}
+    async function stopTyping() {
+      const r = await api("/api/stop", "POST");
+      if (r.ok) {
+        log("已请求停止打字", "warn");
+        $("stopBtn").disabled = true;
+      }
+    }
 
-function updateSettingsStatus() {
-  const status = $("settingsStatus");
-  const saveBtn = $("saveSettingsBtn");
-  if (_settingsDirty) {
-    status.textContent = "未保存的修改";
-    status.style.color = "var(--orange)";
-    saveBtn.disabled = false;
-  } else {
-    status.textContent = "已保存";
-    status.style.color = "var(--green)";
-    saveBtn.disabled = true;
-  }
-}
+    // ---------- 延时设置 ----------
+    const DEFAULT_KEY_DELAY = 0.05;
+    const DEFAULT_ALT_DELAY = 0.08;
+    let _settingsDirty = false;
 
-// 滑块拖动事件
-$("keyDelaySlider").addEventListener("input", () => {
-  updateDelayDisplay();
-  _settingsDirty = true;
-  updateSettingsStatus();
-});
-$("altDelaySlider").addEventListener("input", () => {
-  updateDelayDisplay();
-  _settingsDirty = true;
-  updateSettingsStatus();
-});
+    function secToSlider(sec) { return Math.round(sec * 1000); }
+    function sliderToSec(val) { return parseInt(val, 10) / 1000; }
 
-// 保存设置
-$("saveSettingsBtn").addEventListener("click", async () => {
-  const keyDelay = sliderToSec($("keyDelaySlider").value);
-  const altDelay = sliderToSec($("altDelaySlider").value);
-  log(`保存延时设置: 按键间隔=${keyDelay.toFixed(3)}s, Alt释放=${altDelay.toFixed(3)}s`);
-  const r = await api("/api/settings", "POST", {
-    key_delay: keyDelay,
-    alt_release_delay: altDelay,
-  });
-  if (r.ok) {
-    _settingsDirty = false;
-    updateSettingsStatus();
-    log("延时设置已保存，下次打字生效", "ok");
-    $("settingsTip").textContent = "";
-  } else {
-    log("保存失败: " + r.msg, "err");
-    $("settingsTip").textContent = r.msg;
-  }
-});
+    function initDelaySliders(keyDelay, altDelay) {
+      $("keyDelaySlider").value = secToSlider(keyDelay);
+      $("altDelaySlider").value = secToSlider(altDelay);
+      updateDelayDisplay();
+      _settingsDirty = false;
+      updateSettingsStatus();
+    }
 
-// 恢复默认
-$("resetSettingsBtn").addEventListener("click", () => {
-  $("keyDelaySlider").value = secToSlider(DEFAULT_KEY_DELAY, "key");
-  $("altDelaySlider").value = secToSlider(DEFAULT_ALT_DELAY, "alt");
-  updateDelayDisplay();
-  _settingsDirty = true;
-  updateSettingsStatus();
-  log("已恢复默认值（未保存，请点击保存）");
-});
+    function updateDelayDisplay() {
+      const kVal = sliderToSec($("keyDelaySlider").value);
+      const aVal = sliderToSec($("altDelaySlider").value);
+      $("keyDelayValue").textContent = kVal.toFixed(3) + " s";
+      $("altDelayValue").textContent = aVal.toFixed(3) + " s";
+      $("infoDelay").textContent = kVal.toFixed(3) + " s";
+      $("infoAltDelay").textContent = aVal.toFixed(3) + " s";
+    }
 
-// ---------- 启动 ----------
-updateEncodingTip();
-loadConfig();
-checkHealth();
-log("ChinesePrinter 已就绪");
-</script>
+    function updateSettingsStatus() {
+      const status = $("settingsStatus");
+      const saveBtn = $("saveSettingsBtn");
+      if (_settingsDirty) {
+        status.textContent = "未保存的修改";
+        status.style.color = "var(--orange)";
+        saveBtn.disabled = false;
+      } else {
+        status.textContent = "已保存";
+        status.style.color = "var(--green)";
+        saveBtn.disabled = true;
+      }
+    }
+
+    $("keyDelaySlider").addEventListener("input", () => {
+      updateDelayDisplay();
+      _settingsDirty = true;
+      updateSettingsStatus();
+    });
+    $("altDelaySlider").addEventListener("input", () => {
+      updateDelayDisplay();
+      _settingsDirty = true;
+      updateSettingsStatus();
+    });
+
+    $("saveSettingsBtn").addEventListener("click", async () => {
+      const keyDelay = sliderToSec($("keyDelaySlider").value);
+      const altDelay = sliderToSec($("altDelaySlider").value);
+      log(`保存延时设置: 按键间隔=${keyDelay.toFixed(3)}s, Alt释放=${altDelay.toFixed(3)}s`);
+      const r = await api("/api/settings", "POST", {
+        key_delay: keyDelay,
+        alt_release_delay: altDelay,
+      });
+      if (r.ok) {
+        _settingsDirty = false;
+        updateSettingsStatus();
+        log("延时设置已保存", "ok");
+        toast("设置已保存", "ok");
+      } else {
+        log("保存失败: " + r.msg, "err");
+        toast(r.msg || "保存失败", "err");
+      }
+    });
+
+    $("resetSettingsBtn").addEventListener("click", () => {
+      $("keyDelaySlider").value = secToSlider(DEFAULT_KEY_DELAY);
+      $("altDelaySlider").value = secToSlider(DEFAULT_ALT_DELAY);
+      updateDelayDisplay();
+      _settingsDirty = true;
+      updateSettingsStatus();
+      log("已恢复默认值（未保存）");
+    });
+
+    // ---------- 事件绑定 ----------
+    $("typeBtn").addEventListener("click", startTyping);
+    $("stopBtn").addEventListener("click", stopTyping);
+    $("clearLogBtn").addEventListener("click", () => { logBox.innerHTML = ""; });
+
+    // ---------- 启动 ----------
+    async function init() {
+      log("ChinesePrinter 已就绪 (Shell Edition)");
+      await loadGbkTable();
+      await checkHealth();
+      // 从 health 接口初始化滑块
+      const r = await api("/api/health");
+      if (r.ok !== false) {
+        initDelaySliders(
+          r.key_delay !== undefined ? r.key_delay : DEFAULT_KEY_DELAY,
+          r.alt_release_delay !== undefined ? r.alt_release_delay : DEFAULT_ALT_DELAY
+        );
+      }
+      // 定时刷新状态
+      healthTimer = setInterval(checkHealth, 1500);
+    }
+    init();
+  </script>
 </body>
 </html>

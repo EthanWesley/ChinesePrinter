@@ -1,0 +1,525 @@
+#!/bin/sh
+# ============================================================================
+# server.sh - ChinesePrinter 主服务（纯 shell + socat）
+#
+# 架构：
+#   socat 监听端口 -> 每个连接 fork 一个 shell 处理
+#   GET  /              -> 返回 index.html
+#   GET  /api/health    -> JSON 状态
+#   GET  /api/settings  -> JSON 延时配置
+#   POST /api/type      -> 接收数字序列，执行 Alt 码打字
+#   POST /api/stop      -> 中止当前打字任务
+#   POST /api/settings  -> 更新延时配置
+#
+# 编码转换在网页前端（JS）完成，后端只接收纯数字序列。
+# ============================================================================
+
+set -e
+
+# ---- 配置 ----
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+INSTALL_DIR="${INSTALL_DIR:-$SCRIPT_DIR}"
+PORT="${APP_PORT:-8848}"
+HID_DEVICE="${HID_DEVICE:-/dev/hidg0}"
+KEY_DELAY="${KEY_DELAY:-0.05}"
+ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.08}"
+STATE_DIR="${STATE_DIR:-/tmp/chinese-printer}"
+SETTINGS_FILE="$STATE_DIR/settings.env"
+STOP_FLAG="$STATE_DIR/stop_flag"
+STATUS_FILE="$STATE_DIR/status.json"
+LOG_FILE="${LOG_FILE:-/var/log/chinese-printer.log}"
+
+# ---- 状态目录 ----
+mkdir -p "$STATE_DIR"
+
+# ---- 日志函数 ----
+_log() {
+    _level="$1"
+    _msg="$2"
+    _ts=$(date '+%Y-%m-%d %H:%M:%S')
+    printf "[%s] [%s] %s\n" "$_ts" "$_level" "$_msg" >> "$LOG_FILE" 2>/dev/null || \
+        printf "[%s] [%s] %s\n" "$_ts" "$_level" "$_msg"
+}
+
+log()  { _log "INFO" "$1"; }
+warn() { _log "WARN" "$1"; }
+err()  { _log "ERROR" "$1"; }
+
+# ---- 初始化配置文件 ----
+init_settings() {
+    if [ ! -f "$SETTINGS_FILE" ]; then
+        cat > "$SETTINGS_FILE" <<EOF
+KEY_DELAY=$KEY_DELAY
+ALT_RELEASE_DELAY=$ALT_RELEASE_DELAY
+EOF
+    fi
+    # 加载配置
+    . "$SETTINGS_FILE"
+    KEY_DELAY="${KEY_DELAY:-0.05}"
+    ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.08}"
+}
+
+# ---- 更新状态文件 ----
+update_status() {
+    _busy="${1:-false}"
+    _progress="${2:-0}"
+    _total="${3:-0}"
+    _encoding="${4:-}"
+    _error="${5:-}"
+    cat > "$STATUS_FILE" <<EOF
+{"busy":$_busy,"progress":$_progress,"total":$_total,"encoding":"$_encoding","last_error":"$_error","timestamp":"$(date '+%Y-%m-%dT%H:%M:%S')"}
+EOF
+}
+
+# ---- 初始状态 ----
+update_status false 0 0 "" ""
+
+# ---- 子命令模式：socat fork 出来处理单个连接 ----
+# 此时所有函数和配置已定义，直接调用 handle_request
+if [ "$1" = "handle" ]; then
+    handle_request
+    exit 0
+fi
+
+# ---- 加载 HID 键盘控制 ----
+. "$INSTALL_DIR/hid_keyboard.sh"
+
+# ---- HTTP 响应函数 ----
+
+http_response() {
+    _status="$1"
+    _content_type="$2"
+    _body="$3"
+    case "$_status" in
+        200) _status_text="OK" ;;
+        400) _status_text="Bad Request" ;;
+        404) _status_text="Not Found" ;;
+        500) _status_text="Internal Server Error" ;;
+        *)  _status_text="OK" ;;
+    esac
+    _body_len=$(printf '%s' "$_body" | wc -c | tr -d ' ')
+    printf 'HTTP/1.1 %s %s\r\n' "$_status" "$_status_text"
+    printf 'Content-Type: %s\r\n' "$_content_type"
+    printf 'Content-Length: %s\r\n' "$_body_len"
+    printf 'Access-Control-Allow-Origin: *\r\n'
+    printf 'Connection: close\r\n'
+    printf '\r\n'
+    printf '%s' "$_body"
+}
+
+http_json() {
+    http_response "$1" "application/json; charset=utf-8" "$2"
+}
+
+http_html() {
+    http_response "$1" "text/html; charset=utf-8" "$2"
+}
+
+# ---- URL 解码 ----
+url_decode() {
+    # 将 + 转为空格，%XX 转为对应字符
+    printf '%s' "$1" | sed 's/+/ /g' | awk '
+    BEGIN { RS = "%"; ORS = "" }
+    NR == 1 { printf "%s", $0 }
+    NR > 1 {
+        if (length($0) >= 2) {
+            hex = substr($0, 1, 2)
+            rest = substr($0, 3)
+            printf "%c", strtonum("0x" hex)
+            printf "%s", rest
+        } else {
+            printf "%%%s", $0
+        }
+    }
+    '
+}
+
+# ---- 解析 JSON 中的字段值 ----
+# 参数: $1=JSON 字符串, $2=字段名
+# 返回: 字段值（字符串，不含引号）
+json_get() {
+    _json="$1"
+    _field="$2"
+    printf '%s' "$_json" | awk -v field="\"$_field\"" '
+    {
+        # 查找 "field":"value" 或 "field":value
+        idx = index($0, field)
+        if (idx > 0) {
+            rest = substr($0, idx + length(field))
+            # 跳过 :和空格
+            sub(/^:[ \t]*/, "", rest)
+            if (substr(rest, 1, 1) == "\"") {
+                # 字符串值
+                rest = substr(rest, 2)
+                end = index(rest, "\"")
+                if (end > 0) {
+                    printf "%s", substr(rest, 1, end - 1)
+                }
+            } else {
+                # 数字或布尔值
+                # 取到逗号或 } 为止
+                match(rest, /[,}]/)
+                if (RSTART > 0) {
+                    printf "%s", substr(rest, 1, RSTART - 1)
+                } else {
+                    printf "%s", rest
+                }
+            }
+        }
+    }
+    '
+}
+
+# ---- API: /api/health ----
+api_health() {
+    _device_exists="false"
+    [ -e "$HID_DEVICE" ] && _device_exists="true"
+
+    # 读取设备类型
+    _device_type="unknown"
+    _dev_name="${HID_DEVICE#/dev/}"
+    _proto_file="/sys/class/hidg/${_dev_name}/protocol"
+    if [ -r "$_proto_file" ]; then
+        _proto=$(cat "$_proto_file" 2>/dev/null)
+        case "$_proto" in
+            1) _device_type="keyboard" ;;
+            2) _device_type="mouse" ;;
+        esac
+    fi
+
+    # 读取当前状态
+    _busy="false"
+    _progress="0"
+    _total="0"
+    _encoding=""
+    _last_error=""
+    if [ -f "$STATUS_FILE" ]; then
+        _busy=$(json_get "$(cat "$STATUS_FILE")" "busy")
+        _progress=$(json_get "$(cat "$STATUS_FILE")" "progress")
+        _total=$(json_get "$(cat "$STATUS_FILE")" "total")
+        _encoding=$(json_get "$(cat "$STATUS_FILE")" "encoding")
+        _last_error=$(json_get "$(cat "$STATUS_FILE")" "last_error")
+    fi
+
+    # 读取当前延时设置
+    . "$SETTINGS_FILE" 2>/dev/null
+    _cur_key_delay="${KEY_DELAY:-0.05}"
+    _cur_alt_delay="${ALT_RELEASE_DELAY:-0.08}"
+
+    cat <<EOF
+{"ok":true,"busy":${_busy:-false},"progress":${_progress:-0},"total":${_total:-0},"encoding":"${_encoding:-}","last_error":"${_last_error:-}","device":"$HID_DEVICE","device_exists":$_device_exists,"device_type":"$_device_type","key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"port":$PORT}
+EOF
+}
+
+# ---- API: /api/settings (GET) ----
+api_settings_get() {
+    . "$SETTINGS_FILE" 2>/dev/null
+    _cur_key_delay="${KEY_DELAY:-0.05}"
+    _cur_alt_delay="${ALT_RELEASE_DELAY:-0.08}"
+    cat <<EOF
+{"ok":true,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"key_delay_min":0,"key_delay_max":1,"alt_delay_min":0,"alt_delay_max":2}
+EOF
+}
+
+# ---- API: /api/settings (POST) ----
+# 参数: $1=请求体 JSON
+api_settings_post() {
+    _body="$1"
+    _new_key_delay=$(json_get "$_body" "key_delay")
+    _new_alt_delay=$(json_get "$_body" "alt_release_delay")
+
+    _updated=0
+    _errors=""
+
+    if [ -n "$_new_key_delay" ]; then
+        # 验证是数字且在范围内
+        if printf '%s' "$_new_key_delay" | grep -qE '^[0-9]+\.?[0-9]*$'; then
+            # 用 awk 比较范围
+            _in_range=$(awk -v v="$_new_key_delay" 'BEGIN{ if(v>=0 && v<=1) print 1; else print 0 }')
+            if [ "$_in_range" = "1" ]; then
+                KEY_DELAY="$_new_key_delay"
+                _updated=1
+            else
+                _errors="${_errors}key_delay 超出范围 [0,1]; "
+            fi
+        else
+            _errors="${_errors}key_delay 不是合法数字; "
+        fi
+    fi
+
+    if [ -n "$_new_alt_delay" ]; then
+        if printf '%s' "$_new_alt_delay" | grep -qE '^[0-9]+\.?[0-9]*$'; then
+            _in_range=$(awk -v v="$_new_alt_delay" 'BEGIN{ if(v>=0 && v<=2) print 1; else print 0 }')
+            if [ "$_in_range" = "1" ]; then
+                ALT_RELEASE_DELAY="$_new_alt_delay"
+                _updated=1
+            else
+                _errors="${_errors}alt_release_delay 超出范围 [0,2]; "
+            fi
+        else
+            _errors="${_errors}alt_release_delay 不是合法数字; "
+        fi
+    fi
+
+    if [ -n "$_errors" ]; then
+        printf '{"ok":false,"msg":"%s"}' "$_errors"
+        return
+    fi
+
+    if [ "$_updated" = "0" ]; then
+        printf '{"ok":false,"msg":"未提供可更新字段"}'
+        return
+    fi
+
+    # 保存到配置文件
+    cat > "$SETTINGS_FILE" <<EOF
+KEY_DELAY=$KEY_DELAY
+ALT_RELEASE_DELAY=$ALT_RELEASE_DELAY
+EOF
+    log "延时设置已更新: key_delay=$KEY_DELAY, alt_release_delay=$ALT_RELEASE_DELAY"
+    printf '{"ok":true,"msg":"设置已更新","key_delay":%s,"alt_release_delay":%s}' "$KEY_DELAY" "$ALT_RELEASE_DELAY"
+}
+
+# ---- API: /api/stop (POST) ----
+api_stop() {
+    touch "$STOP_FLAG"
+    log "用户请求停止打字"
+    printf '{"ok":true,"msg":"已请求停止打字"}'
+}
+
+# ---- API: /api/type (POST) ----
+# 请求体: {"encoding":"gbk","items":[{"code":54992},{"control":"enter"},...]}
+api_type() {
+    _body="$1"
+
+    # 检查是否正在打字
+    _busy=$(json_get "$(cat "$STATUS_FILE" 2>/dev/null)" "busy")
+    if [ "$_busy" = "true" ]; then
+        printf '{"ok":false,"msg":"正在打字中，请先停止"}'
+        return
+    fi
+
+    # 检查 HID 设备
+    if [ ! -e "$HID_DEVICE" ]; then
+        printf '{"ok":false,"msg":"HID 设备不存在: %s"}' "$HID_DEVICE"
+        return
+    fi
+
+    # 解析编码和序列
+    _encoding=$(json_get "$_body" "encoding")
+
+    # 提取 items 数组中的 code 和 control 字段
+    # 用 awk 逐项解析
+    _items_file="$STATE_DIR/items.tmp"
+    printf '%s' "$_body" | awk '
+    BEGIN { in_items = 0 }
+    /"items"/ { in_items = 1 }
+    in_items {
+        # 查找 "code":数字
+        if (match($0, /"code"[ \t]*:[ \t]*[0-9]+/)) {
+            s = substr($0, RSTART, RLENGTH)
+            sub(/.*:[ \t]*/, "", s)
+            print "code " s
+        }
+        # 查找 "control":"字符串"
+        if (match($0, /"control"[ \t]*:[ \t]*"[^"]*"/)) {
+            s = substr($0, RSTART, RLENGTH)
+            sub(/.*:[ \t]*"/, "", s)
+            sub(/"$/, "", s)
+            print "control " s
+        }
+    }
+    /\]/ { if (in_items) in_items = 0 }
+    ' > "$_items_file"
+
+    _total=$(wc -l < "$_items_file" | tr -d ' ')
+    if [ "$_total" = "0" ]; then
+        printf '{"ok":false,"msg":"没有可打字的内容"}'
+        rm -f "$_items_file"
+        return
+    fi
+
+    # 启动后台打字任务
+    rm -f "$STOP_FLAG"
+    (
+        # 加载 HID 控制
+        . "$INSTALL_DIR/hid_keyboard.sh"
+        # 重新加载最新延时设置
+        . "$SETTINGS_FILE" 2>/dev/null
+        KEY_DELAY="${KEY_DELAY:-0.05}"
+        ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.08}"
+
+        # 初始化 HID
+        if ! hid_init "$HID_DEVICE" 2>/dev/null; then
+            update_status false 0 "$_total" "$_encoding" "HID 初始化失败"
+            exit 1
+        fi
+
+        update_status true 0 "$_total" "$_encoding" ""
+        log "开始打字: 编码=$_encoding, 共 $_total 项"
+
+        _progress=0
+        while IFS=' ' read -r _type _value; do
+            # 检查停止标志
+            if [ -f "$STOP_FLAG" ]; then
+                log "用户中止打字（已完成 $_progress/$_total）"
+                break
+            fi
+
+            case "$_type" in
+                code)
+                    hid_type_alt_code "$_value"
+                    ;;
+                control)
+                    hid_type_control_char "$_value"
+                    ;;
+            esac
+
+            _progress=$((_progress + 1))
+            update_status true "$_progress" "$_total" "$_encoding" ""
+        done < "$_items_file"
+
+        rm -f "$_items_file" "$STOP_FLAG"
+        update_status false "$_progress" "$_total" "$_encoding" ""
+        log "打字完成: $_progress/$_total"
+    ) &
+
+    printf '{"ok":true,"msg":"开始打字","total":%s,"encoding":"%s"}' "$_total" "$_encoding"
+}
+
+# ---- 处理单个 HTTP 请求 ----
+handle_request() {
+    # 读取请求行
+    read -r _request_line
+    _request_line=$(printf '%s' "$_request_line" | tr -d '\r')
+
+    # 解析方法 和 路径
+    _method=$(printf '%s' "$_request_line" | awk '{print $1}')
+    _path=$(printf '%s' "$_request_line" | awk '{print $2}')
+
+    # 读取 headers（直到空行），记录 Content-Length
+    _content_length=0
+    while IFS= read -r _header; do
+        _header=$(printf '%s' "$_header" | tr -d '\r')
+        [ -z "$_header" ] && break
+        case "$_header" in
+            [Cc]ontent-[Ll]ength:*)
+                _content_length=$(printf '%s' "$_header" | awk '{print $2}')
+                ;;
+        esac
+    done
+
+    # 读取请求体（如果有）
+    _body=""
+    if [ "$_content_length" != "0" ] && [ -n "$_content_length" ]; then
+        _body=$(dd bs=1 count="$_content_length" 2>/dev/null)
+    fi
+
+    # 路由
+    case "$_method" in
+        GET)
+            case "$_path" in
+                /|/index.html)
+                    if [ -f "$INSTALL_DIR/templates/index.html" ]; then
+                        _html=$(cat "$INSTALL_DIR/templates/index.html")
+                        http_html 200 "$_html"
+                    else
+                        http_html 404 "<html><body><h1>404 Not Found</h1><p>index.html not found</p></body></html>"
+                    fi
+                    ;;
+                /api/health)
+                    _json=$(api_health)
+                    http_json 200 "$_json"
+                    ;;
+                /api/settings)
+                    _json=$(api_settings_get)
+                    http_json 200 "$_json"
+                    ;;
+                /api/config)
+                    # 兼容旧接口
+                    _json=$(api_health)
+                    http_json 200 "$_json"
+                    ;;
+                /gbk_table.json)
+                    if [ -f "$INSTALL_DIR/templates/gbk_table.json" ]; then
+                        _json=$(cat "$INSTALL_DIR/templates/gbk_table.json")
+                        http_response 200 "application/json; charset=utf-8" "$_json"
+                    else
+                        http_json 404 '{"ok":false,"msg":"GBK 编码表不存在"}'
+                    fi
+                    ;;
+                *)
+                    http_json 404 '{"ok":false,"msg":"路径不存在"}'
+                    ;;
+            esac
+            ;;
+        POST)
+            case "$_path" in
+                /api/type)
+                    _json=$(api_type "$_body")
+                    http_json 200 "$_json"
+                    ;;
+                /api/stop)
+                    _json=$(api_stop)
+                    http_json 200 "$_json"
+                    ;;
+                /api/settings)
+                    _json=$(api_settings_post "$_body")
+                    http_json 200 "$_json"
+                    ;;
+                *)
+                    http_json 404 '{"ok":false,"msg":"路径不存在"}'
+                    ;;
+            esac
+            ;;
+        OPTIONS)
+            # CORS 预检
+            printf 'HTTP/1.1 204 No Content\r\n'
+            printf 'Access-Control-Allow-Origin: *\r\n'
+            printf 'Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n'
+            printf 'Access-Control-Allow-Headers: Content-Type\r\n'
+            printf 'Content-Length: 0\r\n'
+            printf '\r\n'
+            ;;
+        *)
+            http_json 400 '{"ok":false,"msg":"不支持的请求方法"}'
+            ;;
+    esac
+}
+
+# ---- 初始化并启动服务 ----
+init_settings
+
+log "========================================="
+log "ChinesePrinter 服务启动 (shell + socat)"
+log "  监听端口: $PORT"
+log "  HID 设备: $HID_DEVICE"
+log "  按键间隔: ${KEY_DELAY}s"
+log "  Alt 释放延时: ${ALT_RELEASE_DELAY}s"
+log "  安装目录: $INSTALL_DIR"
+log "========================================="
+
+# 检查 socat
+if ! command -v socat >/dev/null 2>&1; then
+    err "未找到 socat，请安装: opkg install socat 或 apt-get install socat"
+    exit 1
+fi
+
+# 检查 HID 设备
+if [ ! -e "$HID_DEVICE" ]; then
+    warn "HID 设备不存在: $HID_DEVICE，服务仍启动但打字不可用"
+fi
+
+# 用 socat 监听，每个连接 fork 一个 shell 处理
+# 通过环境变量传递配置给子进程
+export INSTALL_DIR
+export HID_DEVICE
+export PORT
+export STATE_DIR
+export SETTINGS_FILE
+export STOP_FLAG
+export STATUS_FILE
+export LOG_FILE
+
+log "服务已启动，等待连接..."
+exec socat TCP-LISTEN:"$PORT",reuseaddr,fork EXEC:"sh $0 handle",stderr
