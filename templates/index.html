@@ -97,6 +97,16 @@
       outline: none; cursor: pointer;
     }
     select:focus { border-color: var(--accent); }
+    select:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .device-selector {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 16px; flex-wrap: wrap;
+      padding: 12px; background: var(--card-2);
+      border: 1px solid var(--border); border-radius: 8px;
+    }
+    .device-selector select { min-width: 220px; flex: 1; max-width: 360px; }
+    .device-selector .tip { font-size: 12px; color: var(--muted); }
 
     .progress-wrap { margin-top: 16px; }
     .progress-bar {
@@ -195,6 +205,14 @@
       <div class="card-title">
         <span>设备信息</span>
         <span class="tip" id="refreshTip">自动刷新</span>
+      </div>
+      <!-- HID 设备切换 -->
+      <div class="device-selector">
+        <label for="deviceSelect" class="field-label">切换 HID 设备:</label>
+        <select id="deviceSelect">
+          <option value="">加载中...</option>
+        </select>
+        <span class="tip" id="deviceSwitchTip"></span>
       </div>
       <div class="info-grid">
         <div class="info-item"><div class="k">HID 设备</div><div class="v" id="infoDevice">-</div></div>
@@ -387,6 +405,52 @@
     // ---------- 状态管理 ----------
     let isTyping = false;
     let healthTimer = null;
+    let _lastDeviceListSig = ""; // 用于检测设备列表是否变化
+    let _deviceSwitching = false; // 防止切换时被 health 覆盖选中项
+
+    // 更新设备选择下拉框
+    function updateDeviceSelector(allDevices, currentDevice) {
+      const sel = $("deviceSelect");
+      const tip = $("deviceSwitchTip");
+      if (!Array.isArray(allDevices)) return;
+
+      // 打字中禁用切换
+      sel.disabled = isTyping;
+      if (isTyping) {
+        tip.textContent = "打字中不可切换";
+        tip.style.color = "var(--orange)";
+      } else {
+        tip.textContent = allDevices.length > 1 ? "可选 " + allDevices.length + " 个设备" : "";
+        tip.style.color = "var(--muted)";
+      }
+
+      // 用签名检测设备列表是否变化
+      const sig = JSON.stringify(allDevices);
+      if (sig !== _lastDeviceListSig) {
+        _lastDeviceListSig = sig;
+        sel.innerHTML = "";
+        if (allDevices.length === 0) {
+          const opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = "未发现 HID 设备";
+          opt.disabled = true;
+          sel.appendChild(opt);
+          return;
+        }
+        const typeMap = {keyboard: "键盘", mouse: "鼠标", unknown: "未知"};
+        allDevices.forEach(d => {
+          const opt = document.createElement("option");
+          opt.value = d.path;
+          const typeText = typeMap[d.type] || d.type || "未知";
+          opt.textContent = d.path + " (" + typeText + ")";
+          sel.appendChild(opt);
+        });
+      }
+      // 设置当前选中项（除非用户正在切换中）
+      if (!_deviceSwitching && currentDevice) {
+        sel.value = currentDevice;
+      }
+    }
 
     async function checkHealth() {
       const r = await api("/api/health");
@@ -400,6 +464,9 @@
       $("infoPort").textContent = r.port || "-";
       $("infoDelay").textContent = (r.key_delay !== undefined ? r.key_delay.toFixed(3) : "?") + " s";
       $("infoAltDelay").textContent = (r.alt_release_delay !== undefined ? r.alt_release_delay.toFixed(3) : "?") + " s";
+
+      // 更新设备选择下拉框
+      updateDeviceSelector(r.all_devices, r.device);
 
       // 打字状态
       if (r.busy && !isTyping) {
@@ -432,6 +499,30 @@
         $("infoDeviceType").title = "";
       }
     }
+
+    // ---------- HID 设备切换 ----------
+    $("deviceSelect").addEventListener("change", async () => {
+      if (isTyping) {
+        toast("打字中不可切换设备", "err");
+        await checkHealth();
+        return;
+      }
+      const dev = $("deviceSelect").value;
+      if (!dev) return;
+      _deviceSwitching = true;
+      log("切换 HID 设备: " + dev);
+      const r = await api("/api/device", "POST", {device: dev});
+      if (r.ok) {
+        toast("已切换到 " + dev, "ok");
+        log("设备已切换: " + dev + " (" + (r.device_type || "未知") + ")", "ok");
+      } else {
+        toast(r.msg || "切换失败", "err");
+        log("切换失败: " + r.msg, "err");
+      }
+      _deviceSwitching = false;
+      // 立即刷新状态
+      await checkHealth();
+    });
 
     // ---------- 打字控制 ----------
     async function startTyping() {

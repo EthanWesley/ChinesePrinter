@@ -25,12 +25,25 @@ KEY_DELAY="${KEY_DELAY:-0.05}"
 ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.08}"
 STATE_DIR="${STATE_DIR:-/tmp/chinese-printer}"
 SETTINGS_FILE="$STATE_DIR/settings.env"
+DEVICE_FILE="$STATE_DIR/current_device"
 STOP_FLAG="$STATE_DIR/stop_flag"
 STATUS_FILE="$STATE_DIR/status.json"
 LOG_FILE="${LOG_FILE:-/tmp/chinese-printer.log}"
 
 # ---- 状态目录 ----
 mkdir -p "$STATE_DIR"
+
+# ---- 获取当前 HID 设备（运行时可切换）----
+get_current_device() {
+    if [ -f "$DEVICE_FILE" ]; then
+        cat "$DEVICE_FILE" 2>/dev/null
+    else
+        echo "$HID_DEVICE"
+    fi
+}
+
+# 运行时读取当前设备（覆盖环境变量）
+HID_DEVICE=$(get_current_device)
 
 # ---- 日志函数 ----
 _log() {
@@ -70,16 +83,6 @@ update_status() {
 {"busy":$_busy,"progress":$_progress,"total":$_total,"encoding":"$_encoding","last_error":"$_error","timestamp":"$(date '+%Y-%m-%dT%H:%M:%S')"}
 EOF
 }
-
-# ---- 初始状态 ----
-update_status false 0 0 "" ""
-
-# ---- 子命令模式：socat fork 出来处理单个连接 ----
-# 此时所有函数和配置已定义，直接调用 handle_request
-if [ "$1" = "handle" ]; then
-    handle_request
-    exit 0
-fi
 
 # ---- 加载 HID 键盘控制 ----
 . "$INSTALL_DIR/hid_keyboard.sh"
@@ -170,14 +173,41 @@ json_get() {
     '
 }
 
+# ---- 列出所有 HID 设备 ----
+list_hid_devices() {
+    _first=1
+    printf '['
+    for dev in /dev/hidg*; do
+        [ -e "$dev" ] || continue
+        _name="${dev#/dev/}"
+        _proto_file="/sys/class/hidg/${_name}/protocol"
+        _proto=""
+        _type="unknown"
+        if [ -r "$_proto_file" ]; then
+            _proto=$(cat "$_proto_file" 2>/dev/null)
+            case "$_proto" in
+                1) _type="keyboard" ;;
+                2) _type="mouse" ;;
+            esac
+        fi
+        [ "$_first" = "1" ] || printf ','
+        printf '{"path":"%s","protocol":"%s","type":"%s"}' "$dev" "$_proto" "$_type"
+        _first=0
+    done
+    printf ']'
+}
+
 # ---- API: /api/health ----
 api_health() {
+    # 运行时读取当前设备
+    _cur_device=$(get_current_device)
+
     _device_exists="false"
-    [ -e "$HID_DEVICE" ] && _device_exists="true"
+    [ -e "$_cur_device" ] && _device_exists="true"
 
     # 读取设备类型
     _device_type="unknown"
-    _dev_name="${HID_DEVICE#/dev/}"
+    _dev_name="${_cur_device#/dev/}"
     _proto_file="/sys/class/hidg/${_dev_name}/protocol"
     if [ -r "$_proto_file" ]; then
         _proto=$(cat "$_proto_file" 2>/dev/null)
@@ -206,9 +236,54 @@ api_health() {
     _cur_key_delay="${KEY_DELAY:-0.05}"
     _cur_alt_delay="${ALT_RELEASE_DELAY:-0.08}"
 
+    # 列出所有设备
+    _all_devices=$(list_hid_devices)
+
     cat <<EOF
-{"ok":true,"busy":${_busy:-false},"progress":${_progress:-0},"total":${_total:-0},"encoding":"${_encoding:-}","last_error":"${_last_error:-}","device":"$HID_DEVICE","device_exists":$_device_exists,"device_type":"$_device_type","key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"port":$PORT}
+{"ok":true,"busy":${_busy:-false},"progress":${_progress:-0},"total":${_total:-0},"encoding":"${_encoding:-}","last_error":"${_last_error:-}","device":"$_cur_device","device_exists":$_device_exists,"device_type":"$_device_type","all_devices":$_all_devices,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"port":$PORT}
 EOF
+}
+
+# ---- API: /api/device (POST) ----
+# 切换当前 HID 设备
+api_device_post() {
+    _body="$1"
+    _new_device=$(json_get "$_body" "device")
+
+    if [ -z "$_new_device" ]; then
+        printf '{"ok":false,"msg":"未提供 device 参数"}'
+        return
+    fi
+
+    # 验证设备路径格式（必须是 /dev/hidgN）
+    if ! printf '%s' "$_new_device" | grep -qE '^/dev/hidg[0-9]+$'; then
+        printf '{"ok":false,"msg":"设备路径格式错误，必须是 /dev/hidgN"}'
+        return
+    fi
+
+    # 验证设备存在
+    if [ ! -e "$_new_device" ]; then
+        printf '{"ok":false,"msg":"设备不存在: %s"}' "$_new_device"
+        return
+    fi
+
+    # 读取设备类型
+    _dev_name="${_new_device#/dev/}"
+    _proto_file="/sys/class/hidg/${_dev_name}/protocol"
+    _dev_type="unknown"
+    if [ -r "$_proto_file" ]; then
+        _proto=$(cat "$_proto_file" 2>/dev/null)
+        case "$_proto" in
+            1) _dev_type="keyboard" ;;
+            2) _dev_type="mouse" ;;
+        esac
+    fi
+
+    # 保存到文件
+    printf '%s' "$_new_device" > "$DEVICE_FILE"
+    log "HID 设备已切换: $_new_device (类型: $_dev_type)"
+
+    printf '{"ok":true,"msg":"设备已切换","device":"%s","device_type":"%s"}' "$_new_device" "$_dev_type"
 }
 
 # ---- API: /api/settings (GET) ----
@@ -299,9 +374,12 @@ api_type() {
         return
     fi
 
+    # 运行时获取当前 HID 设备（允许网页切换）
+    _cur_device=$(get_current_device)
+
     # 检查 HID 设备
-    if [ ! -e "$HID_DEVICE" ]; then
-        printf '{"ok":false,"msg":"HID 设备不存在: %s"}' "$HID_DEVICE"
+    if [ ! -e "$_cur_device" ]; then
+        printf '{"ok":false,"msg":"HID 设备不存在: %s"}' "$_cur_device"
         return
     fi
 
@@ -349,8 +427,8 @@ api_type() {
         KEY_DELAY="${KEY_DELAY:-0.05}"
         ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.08}"
 
-        # 初始化 HID
-        if ! hid_init "$HID_DEVICE" 2>/dev/null; then
+        # 初始化 HID（使用运行时选择的设备）
+        if ! hid_init "$_cur_device" 2>/dev/null; then
             update_status false 0 "$_total" "$_encoding" "HID 初始化失败"
             exit 1
         fi
@@ -479,6 +557,10 @@ handle_request() {
                     _json=$(api_settings_post "$_body")
                     http_json 200 "$_json"
                     ;;
+                /api/device)
+                    _json=$(api_device_post "$_body")
+                    http_json 200 "$_json"
+                    ;;
                 *)
                     http_json 404 '{"ok":false,"msg":"路径不存在"}'
                     ;;
@@ -499,8 +581,16 @@ handle_request() {
     esac
 }
 
-# ---- 初始化并启动服务 ----
+# ---- 子命令模式：socat fork 出来处理单个连接 ----
+# 必须在 handle_request 定义之后调用
+if [ "$1" = "handle" ]; then
+    handle_request
+    exit 0
+fi
+
+# ---- 初始化并启动服务（仅主进程执行）----
 init_settings
+update_status false 0 0 "" ""
 
 log "========================================="
 log "ChinesePrinter 服务启动 (shell + socat)"
