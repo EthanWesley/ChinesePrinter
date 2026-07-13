@@ -64,23 +64,23 @@ hid_press_release() {
 }
 
 # ---- 小键盘数字键码 ----
-# Numpad 0-9 的 HID keycode
-# Numpad0=0x62, Numpad1=0x59, Numpad2=0x5A, Numpad3=0x5B,
-# Numpad4=0x5C, Numpad5=0x5D, Numpad6=0x5E, Numpad7=0x5F,
-# Numpad8=0x60, Numpad9=0x61
+# Numpad 0-9 的 HID keycode（返回十进制值，供 hid_send 使用）
+# Numpad0=0x62(98), Numpad1=0x59(89), Numpad2=0x5A(90), Numpad3=0x5B(91),
+# Numpad4=0x5C(92), Numpad5=0x5D(93), Numpad6=0x5E(94), Numpad7=0x5F(95),
+# Numpad8=0x60(96), Numpad9=0x61(97)
 _numpad_keycode() {
     case "$1" in
-        0) echo "62" ;;
-        1) echo "59" ;;
-        2) echo "5a" ;;
-        3) echo "5b" ;;
-        4) echo "5c" ;;
-        5) echo "5d" ;;
-        6) echo "5e" ;;
-        7) echo "5f" ;;
-        8) echo "60" ;;
-        9) echo "61" ;;
-        *) echo "00" ;;
+        0) echo "98" ;;
+        1) echo "89" ;;
+        2) echo "90" ;;
+        3) echo "91" ;;
+        4) echo "92" ;;
+        5) echo "93" ;;
+        6) echo "94" ;;
+        7) echo "95" ;;
+        8) echo "96" ;;
+        9) echo "97" ;;
+        *) echo "0" ;;
     esac
 }
 
@@ -90,10 +90,10 @@ hid_type_numpad_digit() {
     _digit="$1"
     _kc=$(_numpad_keycode "$_digit")
     # 按下键（Alt 仍按住，modifier=0x04）
-    printf "\\x04\\x00\\x%s\\x00\\x00\\x00\\x00\\x00" "$_kc" > "$HID_DEVICE"
+    hid_send 4 "$_kc"
     sleep "$KEY_DELAY"
     # 松开键（Alt 仍按住）
-    printf '\x04\x00\x00\x00\x00\x00\x00\x00' > "$HID_DEVICE"
+    hid_send 4 0
     sleep "$KEY_DELAY"
 }
 
