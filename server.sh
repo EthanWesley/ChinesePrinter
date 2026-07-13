@@ -14,7 +14,7 @@
 # 编码转换在网页前端（JS）完成，后端只接收纯数字序列。
 # ============================================================================
 
-set -e
+# 注意：不使用 set -e，避免子进程中 read 失败时直接退出不返回数据
 
 # ---- 配置 ----
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -27,7 +27,7 @@ STATE_DIR="${STATE_DIR:-/tmp/chinese-printer}"
 SETTINGS_FILE="$STATE_DIR/settings.env"
 STOP_FLAG="$STATE_DIR/stop_flag"
 STATUS_FILE="$STATE_DIR/status.json"
-LOG_FILE="${LOG_FILE:-/var/log/chinese-printer.log}"
+LOG_FILE="${LOG_FILE:-/tmp/chinese-printer.log}"
 
 # ---- 状态目录 ----
 mkdir -p "$STATE_DIR"
@@ -389,9 +389,21 @@ api_type() {
 
 # ---- 处理单个 HTTP 请求 ----
 handle_request() {
-    # 读取请求行
-    read -r _request_line
+    # 读取请求行（容错：read 失败时返回 400）
+    _request_line=""
+    read -r _request_line 2>/dev/null || true
     _request_line=$(printf '%s' "$_request_line" | tr -d '\r')
+
+    # 如果读不到请求行，返回 400
+    if [ -z "$_request_line" ]; then
+        printf 'HTTP/1.1 400 Bad Request\r\n'
+        printf 'Content-Type: application/json; charset=utf-8\r\n'
+        printf 'Content-Length: 35\r\n'
+        printf 'Connection: close\r\n'
+        printf '\r\n'
+        printf '{"ok":false,"msg":"空请求"}'
+        return
+    fi
 
     # 解析方法 和 路径
     _method=$(printf '%s' "$_request_line" | awk '{print $1}')
@@ -399,7 +411,7 @@ handle_request() {
 
     # 读取 headers（直到空行），记录 Content-Length
     _content_length=0
-    while IFS= read -r _header; do
+    while IFS= read -r _header 2>/dev/null; do
         _header=$(printf '%s' "$_header" | tr -d '\r')
         [ -z "$_header" ] && break
         case "$_header" in
@@ -520,6 +532,10 @@ export SETTINGS_FILE
 export STOP_FLAG
 export STATUS_FILE
 export LOG_FILE
+export KEY_DELAY
+export ALT_RELEASE_DELAY
 
 log "服务已启动，等待连接..."
-exec socat TCP-LISTEN:"$PORT",reuseaddr,fork EXEC:"sh $0 handle",stderr
+# 用 SYSTEM 而非 EXEC，避免参数解析问题
+# socat 会将 stdin/stdout 连接到 socket
+exec socat TCP-LISTEN:"$PORT",reuseaddr,fork SYSTEM:"sh '$INSTALL_DIR/server.sh' handle"

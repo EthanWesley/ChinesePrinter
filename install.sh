@@ -476,7 +476,7 @@ else
     echo "    $INIT_SCRIPT status               # 查看状态"
     echo "    $INIT_SCRIPT restart              # 重启服务"
     echo "    $INIT_SCRIPT stop                 # 停止服务"
-    echo "    tail -f /var/log/chinese-printer.log  # 查看日志"
+    echo "    tail -f /tmp/chinese-printer.log  # 查看日志"
 fi
 echo ""
 echo "  修改配置:  编辑 $ENV_FILE 后重启服务"
