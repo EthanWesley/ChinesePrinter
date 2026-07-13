@@ -104,24 +104,44 @@ ok "awk: $(command -v awk)"
 # 检查 sh（解释器）
 ok "sh: $0"
 
+# 获取 HID 设备的 protocol（1=键盘, 2=鼠标，空=未知）
+# 优先 /sys/class/hidg/<name>/protocol，回退到 configfs 的 hid.usbN
+get_hid_protocol() {
+    _dev_path="$1"
+    _dev_name="${_dev_path#/dev/}"
+    _dev_idx="${_dev_name#hidg}"
+
+    _proto_file="/sys/class/hidg/${_dev_name}/protocol"
+    if [ -r "$_proto_file" ]; then
+        cat "$_proto_file" 2>/dev/null
+        return
+    fi
+    for _cfg in /sys/kernel/config/usb_gadget/*/functions/hid.usb"${_dev_idx}"; do
+        [ -r "$_cfg/protocol" ] || continue
+        cat "$_cfg/protocol" 2>/dev/null
+        return
+    done
+    echo ""
+}
+
+proto_to_desc() {
+    case "$1" in
+        1) echo "键盘" ;;
+        2) echo "鼠标" ;;
+        *) echo "未知($1)" ;;
+    esac
+}
+
 # 检查 HID 设备（支持自动识别键盘设备）
 detect_hid_keyboard() {
-    if [ -d /sys/class/hidg ]; then
-        for dev in /dev/hidg*; do
-            [ -e "$dev" ] || continue
-            name="${dev#/dev/}"
-            proto_file="/sys/class/hidg/${name}/protocol"
-            if [ -r "$proto_file" ]; then
-                proto=$(cat "$proto_file" 2>/dev/null)
-                case "$proto" in
-                    1)
-                        echo "$dev"
-                        return 0
-                        ;;
-                esac
-            fi
-        done
-    fi
+    for dev in /dev/hidg*; do
+        [ -e "$dev" ] || continue
+        proto=$(get_hid_protocol "$dev")
+        if [ "$proto" = "1" ]; then
+            echo "$dev"
+            return 0
+        fi
+    done
     [ -e /dev/hidg0 ] && echo "/dev/hidg0" && return 0
     return 1
 }
@@ -139,19 +159,9 @@ if [ "$HID_DEVICE" = "/dev/hidg0" ]; then
 fi
 
 if [ -e "$HID_DEVICE" ]; then
-    name="${HID_DEVICE#/dev/}"
-    proto_file="/sys/class/hidg/${name}/protocol"
-    if [ -r "$proto_file" ]; then
-        proto=$(cat "$proto_file" 2>/dev/null)
-        case "$proto" in
-            1) proto_desc="键盘" ;;
-            2) proto_desc="鼠标" ;;
-            *) proto_desc="未知($proto)" ;;
-        esac
-        ok "HID 设备: $HID_DEVICE (类型: $proto_desc)"
-    else
-        ok "HID 设备: $HID_DEVICE (存在)"
-    fi
+    proto=$(get_hid_protocol "$HID_DEVICE")
+    proto_desc=$(proto_to_desc "$proto")
+    ok "HID 设备: $HID_DEVICE (类型: $proto_desc)"
 else
     warn "HID 设备 $HID_DEVICE 不存在"
     warn "可能原因:"
@@ -160,27 +170,12 @@ else
     warn "  3. USB 线未连接到目标电脑"
     echo ""
     info "搜索可能的 HID 设备..."
-    if [ -d /sys/class/hidg ]; then
-        for dev in /dev/hidg*; do
-            [ -e "$dev" ] || continue
-            name="${dev#/dev/}"
-            proto_file="/sys/class/hidg/${name}/protocol"
-            proto_desc="未知"
-            if [ -r "$proto_file" ]; then
-                proto=$(cat "$proto_file" 2>/dev/null)
-                case "$proto" in
-                    1) proto_desc="键盘" ;;
-                    2) proto_desc="鼠标" ;;
-                    *) proto_desc="未知($proto)" ;;
-                esac
-            fi
-            echo "    发现: $dev (类型: $proto_desc)"
-        done 2>/dev/null || true
-    else
-        for dev in /dev/hidg*; do
-            [ -e "$dev" ] && echo "    发现: $dev"
-        done 2>/dev/null || true
-    fi
+    for dev in /dev/hidg*; do
+        [ -e "$dev" ] || continue
+        proto=$(get_hid_protocol "$dev")
+        proto_desc=$(proto_to_desc "$proto")
+        echo "    发现: $dev (类型: $proto_desc)"
+    done 2>/dev/null || true
     echo ""
     warn "服务仍会安装，但打字功能在 HID 设备可用前无法工作"
 fi

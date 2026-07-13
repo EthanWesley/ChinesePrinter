@@ -173,23 +173,52 @@ json_get() {
     '
 }
 
+# ---- 获取 HID 设备的 protocol ----
+# 参数: $1 = 设备路径 (如 /dev/hidg0)
+# 返回: protocol 数字 (1=键盘, 2=鼠标)，空字符串表示未知
+# 查找顺序:
+#   1. /sys/class/hidg/<name>/protocol (某些内核版本有)
+#   2. /sys/kernel/config/usb_gadget/*/functions/hid.usb<N>/protocol (configfs)
+get_hid_protocol() {
+    _dev_path="$1"
+    _dev_name="${_dev_path#/dev/}"
+    _dev_idx="${_dev_name#hidg}"
+
+    # 方式1: /sys/class/hidg/<name>/protocol
+    _proto_file="/sys/class/hidg/${_dev_name}/protocol"
+    if [ -r "$_proto_file" ]; then
+        cat "$_proto_file" 2>/dev/null
+        return
+    fi
+
+    # 方式2: configfs (按 hid.usbN 索引匹配 hidgN)
+    for _cfg in /sys/kernel/config/usb_gadget/*/functions/hid.usb"${_dev_idx}"; do
+        [ -r "$_cfg/protocol" ] || continue
+        cat "$_cfg/protocol" 2>/dev/null
+        return
+    done
+
+    # 未知
+    echo ""
+}
+
+# protocol 数字转类型字符串
+proto_to_type() {
+    case "$1" in
+        1) echo "keyboard" ;;
+        2) echo "mouse" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
 # ---- 列出所有 HID 设备 ----
 list_hid_devices() {
     _first=1
     printf '['
     for dev in /dev/hidg*; do
         [ -e "$dev" ] || continue
-        _name="${dev#/dev/}"
-        _proto_file="/sys/class/hidg/${_name}/protocol"
-        _proto=""
-        _type="unknown"
-        if [ -r "$_proto_file" ]; then
-            _proto=$(cat "$_proto_file" 2>/dev/null)
-            case "$_proto" in
-                1) _type="keyboard" ;;
-                2) _type="mouse" ;;
-            esac
-        fi
+        _proto=$(get_hid_protocol "$dev")
+        _type=$(proto_to_type "$_proto")
         [ "$_first" = "1" ] || printf ','
         printf '{"path":"%s","protocol":"%s","type":"%s"}' "$dev" "$_proto" "$_type"
         _first=0
@@ -206,16 +235,8 @@ api_health() {
     [ -e "$_cur_device" ] && _device_exists="true"
 
     # 读取设备类型
-    _device_type="unknown"
-    _dev_name="${_cur_device#/dev/}"
-    _proto_file="/sys/class/hidg/${_dev_name}/protocol"
-    if [ -r "$_proto_file" ]; then
-        _proto=$(cat "$_proto_file" 2>/dev/null)
-        case "$_proto" in
-            1) _device_type="keyboard" ;;
-            2) _device_type="mouse" ;;
-        esac
-    fi
+    _proto=$(get_hid_protocol "$_cur_device")
+    _device_type=$(proto_to_type "$_proto")
 
     # 读取当前状态
     _busy="false"
@@ -268,16 +289,8 @@ api_device_post() {
     fi
 
     # 读取设备类型
-    _dev_name="${_new_device#/dev/}"
-    _proto_file="/sys/class/hidg/${_dev_name}/protocol"
-    _dev_type="unknown"
-    if [ -r "$_proto_file" ]; then
-        _proto=$(cat "$_proto_file" 2>/dev/null)
-        case "$_proto" in
-            1) _dev_type="keyboard" ;;
-            2) _dev_type="mouse" ;;
-        esac
-    fi
+    _proto=$(get_hid_protocol "$_new_device")
+    _dev_type=$(proto_to_type "$_proto")
 
     # 保存到文件
     printf '%s' "$_new_device" > "$DEVICE_FILE"
