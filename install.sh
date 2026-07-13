@@ -399,22 +399,50 @@ EOF
             chkconfig --add "$SERVICE_NAME" 2>/dev/null
             ok "chkconfig 已启用开机自启"
         else
-            RC_LOCAL="/etc/rc.local"
-            if [ -f "$RC_LOCAL" ]; then
-                if ! grep -q "$SERVICE_NAME" "$RC_LOCAL" 2>/dev/null; then
-                    sed -i "/^exit 0/i $INIT_SCRIPT start" "$RC_LOCAL" 2>/dev/null || \
-                        echo "$INIT_SCRIPT start" >> "$RC_LOCAL"
-                fi
-            else
-                echo "#!/bin/sh" > "$RC_LOCAL"
-                echo "$INIT_SCRIPT start" >> "$RC_LOCAL"
-                echo "exit 0" >> "$RC_LOCAL"
-                chmod 755 "$RC_LOCAL"
+            # BusyBox init: rcS 只执行 /etc/init.d/S??* 脚本
+            # 必须用 SNN 前缀的软链接才能开机启动（rc.local 在此系统不会被调用）
+            BUSYBOX_RCS_LINK=""
+            if [ -f /etc/init.d/rcS ] && grep -q "S??\*" /etc/init.d/rcS 2>/dev/null; then
+                # 检测为 BusyBox init rcS 机制
+                for n in 99 98 97 50; do
+                    _candidate="/etc/init.d/S${n}${SERVICE_NAME}"
+                    if [ ! -e "$_candidate" ]; then
+                        BUSYBOX_RCS_LINK="$_candidate"
+                        break
+                    fi
+                done
             fi
-            ok "rc.local 已启用开机自启"
+
+            if [ -n "$BUSYBOX_RCS_LINK" ]; then
+                # 创建 S99 软链接指向 init.d 脚本
+                ln -sf "$INIT_SCRIPT" "$BUSYBOX_RCS_LINK"
+                ok "BusyBox init 已启用开机自启: $(basename "$BUSYBOX_RCS_LINK") -> $SERVICE_NAME"
+            else
+                # 最后回退：rc.local（仅当系统确实会调用它时才有用）
+                RC_LOCAL="/etc/rc.local"
+                if [ -f "$RC_LOCAL" ]; then
+                    if ! grep -q "$SERVICE_NAME" "$RC_LOCAL" 2>/dev/null; then
+                        sed -i "/^exit 0/i $INIT_SCRIPT start" "$RC_LOCAL" 2>/dev/null || \
+                            echo "$INIT_SCRIPT start" >> "$RC_LOCAL"
+                    fi
+                else
+                    echo "#!/bin/sh" > "$RC_LOCAL"
+                    echo "$INIT_SCRIPT start" >> "$RC_LOCAL"
+                    echo "exit 0" >> "$RC_LOCAL"
+                    chmod 755 "$RC_LOCAL"
+                fi
+                warn "已写入 rc.local，但请确认系统启动时是否调用 rc.local"
+                warn "BusyBox init 系统通常需要 SNN 前缀的 init.d 脚本才会自动启动"
+            fi
         fi
     else
-        ok "开机自启已配置（跳过）"
+        # 更新模式：确保软链接存在（之前版本可能漏创建）
+        if [ ! -e "/etc/init.d/S99${SERVICE_NAME}" ] && [ -f /etc/init.d/rcS ] && grep -q "S??\*" /etc/init.d/rcS 2>/dev/null; then
+            ln -sf "$INIT_SCRIPT" "/etc/init.d/S99${SERVICE_NAME}"
+            ok "补建 BusyBox init 开机自启软链接: S99${SERVICE_NAME}"
+        else
+            ok "开机自启已配置（跳过）"
+        fi
     fi
 
     if [ "$IS_UPDATE" -eq 1 ]; then
