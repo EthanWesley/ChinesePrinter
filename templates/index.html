@@ -239,6 +239,9 @@
             <option value="unicode">Unicode (通用)</option>
           </select>
         </div>
+        <button id="copyBtn" class="secondary" type="button">复制</button>
+        <button id="pasteBtn" class="secondary" type="button">粘贴</button>
+        <button id="clearBtn" class="secondary" type="button">清空</button>
         <button id="typeBtn" class="primary">开始打字</button>
         <button id="stopBtn" class="danger" disabled>停止</button>
       </div>
@@ -261,22 +264,22 @@
         <div class="setting-item">
           <div class="setting-head">
             <label class="field-label">按键间隔（每步按键之间的延时）</label>
-            <span class="setting-value" id="keyDelayValue">0.050 s</span>
+            <span class="setting-value" id="keyDelayValue">5 ms</span>
           </div>
-          <input type="range" id="keyDelaySlider" min="0" max="500" step="5" value="50">
+          <input type="range" id="keyDelaySlider" min="0" max="20" step="1" value="5">
           <div class="setting-desc">
-            范围: <code id="keyDelayRange">0 ~ 1.000 s</code> ·
+            范围: <code id="keyDelayRange">0 ~ 20 ms</code> ·
             值越小打字越快，但太快可能丢键
           </div>
         </div>
         <div class="setting-item">
           <div class="setting-head">
             <label class="field-label">Alt 释放延时（松开 Alt 前的等待）</label>
-            <span class="setting-value" id="altDelayValue">0.080 s</span>
+            <span class="setting-value" id="altDelayValue">8 ms</span>
           </div>
-          <input type="range" id="altDelaySlider" min="0" max="1000" step="10" value="80">
+          <input type="range" id="altDelaySlider" min="0" max="20" step="1" value="8">
           <div class="setting-desc">
-            范围: <code id="altDelayRange">0 ~ 2.000 s</code> ·
+            范围: <code id="altDelayRange">0 ~ 20 ms</code> ·
             太短可能导致字符未被目标电脑识别
           </div>
         </div>
@@ -462,8 +465,13 @@
       $("infoDeviceOk").textContent = r.device_exists ? "已连接" : "未找到";
       $("infoDeviceOk").className = "v " + (r.device_exists ? "ok" : "bad");
       $("infoPort").textContent = r.port || "-";
-      $("infoDelay").textContent = (r.key_delay !== undefined ? r.key_delay.toFixed(3) : "?") + " s";
-      $("infoAltDelay").textContent = (r.alt_release_delay !== undefined ? r.alt_release_delay.toFixed(3) : "?") + " s";
+      // 延时以毫秒显示（与滑块单位一致）
+      if (r.key_delay !== undefined && !_settingsDirty) {
+        $("infoDelay").textContent = secToMs(r.key_delay) + " ms";
+      }
+      if (r.alt_release_delay !== undefined && !_settingsDirty) {
+        $("infoAltDelay").textContent = secToMs(r.alt_release_delay) + " ms";
+      }
 
       // 更新设备选择下拉框
       updateDeviceSelector(r.all_devices, r.device);
@@ -562,29 +570,37 @@
       }
     }
 
-    // ---------- 延时设置 ----------
-    const DEFAULT_KEY_DELAY = 0.05;
-    const DEFAULT_ALT_DELAY = 0.08;
+    // ---------- 延时设置（单位: 毫秒，范围 0-20） ----------
+    const DEFAULT_KEY_DELAY_MS = 5;
+    const DEFAULT_ALT_DELAY_MS = 8;
     let _settingsDirty = false;
 
-    function secToSlider(sec) { return Math.round(sec * 1000); }
-    function sliderToSec(val) { return parseInt(val, 10) / 1000; }
+    // 秒（后端单位）转毫秒（滑块单位）
+    function secToMs(sec) { return Math.round(sec * 1000); }
+    // 毫秒（滑块单位）转秒（后端单位）
+    function msToSec(ms) { return parseInt(ms, 10) / 1000; }
 
-    function initDelaySliders(keyDelay, altDelay) {
-      $("keyDelaySlider").value = secToSlider(keyDelay);
-      $("altDelaySlider").value = secToSlider(altDelay);
+    function initDelaySliders(keyDelaySec, altDelaySec) {
+      // 从后端秒值转换，并限制在 0-20ms 范围
+      let kMs = secToMs(keyDelaySec);
+      let aMs = secToMs(altDelaySec);
+      kMs = Math.min(20, Math.max(0, kMs));
+      aMs = Math.min(20, Math.max(0, aMs));
+      $("keyDelaySlider").value = kMs;
+      $("altDelaySlider").value = aMs;
       updateDelayDisplay();
       _settingsDirty = false;
       updateSettingsStatus();
     }
 
     function updateDelayDisplay() {
-      const kVal = sliderToSec($("keyDelaySlider").value);
-      const aVal = sliderToSec($("altDelaySlider").value);
-      $("keyDelayValue").textContent = kVal.toFixed(3) + " s";
-      $("altDelayValue").textContent = aVal.toFixed(3) + " s";
-      $("infoDelay").textContent = kVal.toFixed(3) + " s";
-      $("infoAltDelay").textContent = aVal.toFixed(3) + " s";
+      const kMs = parseInt($("keyDelaySlider").value, 10);
+      const aMs = parseInt($("altDelaySlider").value, 10);
+      $("keyDelayValue").textContent = kMs + " ms";
+      $("altDelayValue").textContent = aMs + " ms";
+      // 设备信息卡片同步显示毫秒
+      $("infoDelay").textContent = kMs + " ms";
+      $("infoAltDelay").textContent = aMs + " ms";
     }
 
     function updateSettingsStatus() {
@@ -613,12 +629,15 @@
     });
 
     $("saveSettingsBtn").addEventListener("click", async () => {
-      const keyDelay = sliderToSec($("keyDelaySlider").value);
-      const altDelay = sliderToSec($("altDelaySlider").value);
-      log(`保存延时设置: 按键间隔=${keyDelay.toFixed(3)}s, Alt释放=${altDelay.toFixed(3)}s`);
+      const kMs = parseInt($("keyDelaySlider").value, 10);
+      const aMs = parseInt($("altDelaySlider").value, 10);
+      // 提交时转换为秒（后端 sleep 接受小数秒）
+      const keyDelaySec = msToSec(kMs);
+      const altDelaySec = msToSec(aMs);
+      log(`保存延时设置: 按键间隔=${kMs}ms, Alt释放=${aMs}ms`);
       const r = await api("/api/settings", "POST", {
-        key_delay: keyDelay,
-        alt_release_delay: altDelay,
+        key_delay: keyDelaySec,
+        alt_release_delay: altDelaySec,
       });
       if (r.ok) {
         _settingsDirty = false;
@@ -632,12 +651,71 @@
     });
 
     $("resetSettingsBtn").addEventListener("click", () => {
-      $("keyDelaySlider").value = secToSlider(DEFAULT_KEY_DELAY);
-      $("altDelaySlider").value = secToSlider(DEFAULT_ALT_DELAY);
+      $("keyDelaySlider").value = DEFAULT_KEY_DELAY_MS;
+      $("altDelaySlider").value = DEFAULT_ALT_DELAY_MS;
       updateDelayDisplay();
       _settingsDirty = true;
       updateSettingsStatus();
       log("已恢复默认值（未保存）");
+    });
+
+    // ---------- 文本框快捷操作 ----------
+    $("copyBtn").addEventListener("click", async () => {
+      const ta = $("textInput");
+      const text = ta.value;
+      if (!text) {
+        toast("文本框为空", "err");
+        return;
+      }
+      // 优先用 Clipboard API
+      try {
+        await navigator.clipboard.writeText(text);
+        toast("已复制 " + text.length + " 字", "ok");
+      } catch (e) {
+        // 回退：选中文本，让用户 Ctrl+C
+        ta.focus();
+        ta.select();
+        try { document.execCommand("copy"); toast("已复制（兼容模式）", "ok"); }
+        catch (e2) { toast("复制失败，请手动 Ctrl+C", "err"); }
+      }
+    });
+
+    $("pasteBtn").addEventListener("click", async () => {
+      const ta = $("textInput");
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text) {
+          toast("剪贴板为空", "err");
+          return;
+        }
+        // 在光标位置插入，或追加到末尾
+        const start = ta.selectionStart;
+        const end = ta.selectionEnd;
+        if (start !== end) {
+          // 替换选中的内容
+          ta.value = ta.value.slice(0, start) + text + ta.value.slice(end);
+          ta.selectionStart = ta.selectionEnd = start + text.length;
+        } else {
+          // 在光标位置插入
+          ta.value = ta.value.slice(0, start) + text + ta.value.slice(start);
+          ta.selectionStart = ta.selectionEnd = start + text.length;
+        }
+        ta.focus();
+        toast("已粘贴 " + text.length + " 字", "ok");
+      } catch (e) {
+        toast("粘贴失败，请手动 Ctrl+V", "err");
+      }
+    });
+
+    $("clearBtn").addEventListener("click", () => {
+      const ta = $("textInput");
+      if (!ta.value) {
+        toast("文本框已为空", "err");
+        return;
+      }
+      ta.value = "";
+      ta.focus();
+      toast("已清空", "ok");
     });
 
     // ---------- 事件绑定 ----------
@@ -654,8 +732,8 @@
       const r = await api("/api/health");
       if (r.ok !== false) {
         initDelaySliders(
-          r.key_delay !== undefined ? r.key_delay : DEFAULT_KEY_DELAY,
-          r.alt_release_delay !== undefined ? r.alt_release_delay : DEFAULT_ALT_DELAY
+          r.key_delay !== undefined ? r.key_delay : msToSec(DEFAULT_KEY_DELAY_MS),
+          r.alt_release_delay !== undefined ? r.alt_release_delay : msToSec(DEFAULT_ALT_DELAY_MS)
         );
       }
       // 定时刷新状态

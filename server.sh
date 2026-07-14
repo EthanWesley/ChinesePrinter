@@ -21,8 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="${INSTALL_DIR:-$SCRIPT_DIR}"
 PORT="${APP_PORT:-8848}"
 HID_DEVICE="${HID_DEVICE:-/dev/hidg0}"
-KEY_DELAY="${KEY_DELAY:-0.05}"
-ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.08}"
+KEY_DELAY="${KEY_DELAY:-0.005}"
+ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.008}"
 STATE_DIR="${STATE_DIR:-/tmp/chinese-printer}"
 SETTINGS_FILE="$STATE_DIR/settings.env"
 DEVICE_FILE="$STATE_DIR/current_device"
@@ -302,10 +302,10 @@ api_device_post() {
 # ---- API: /api/settings (GET) ----
 api_settings_get() {
     . "$SETTINGS_FILE" 2>/dev/null
-    _cur_key_delay="${KEY_DELAY:-0.05}"
-    _cur_alt_delay="${ALT_RELEASE_DELAY:-0.08}"
+    _cur_key_delay="${KEY_DELAY:-0.005}"
+    _cur_alt_delay="${ALT_RELEASE_DELAY:-0.008}"
     cat <<EOF
-{"ok":true,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"key_delay_min":0,"key_delay_max":1,"alt_delay_min":0,"alt_delay_max":2}
+{"ok":true,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"key_delay_min":0,"key_delay_max":0.02,"alt_delay_min":0,"alt_delay_max":0.02}
 EOF
 }
 
@@ -320,15 +320,15 @@ api_settings_post() {
     _errors=""
 
     if [ -n "$_new_key_delay" ]; then
-        # 验证是数字且在范围内
+        # 验证是数字且在范围内（0-20ms = 0-0.02s）
         if printf '%s' "$_new_key_delay" | grep -qE '^[0-9]+\.?[0-9]*$'; then
             # 用 awk 比较范围
-            _in_range=$(awk -v v="$_new_key_delay" 'BEGIN{ if(v>=0 && v<=1) print 1; else print 0 }')
+            _in_range=$(awk -v v="$_new_key_delay" 'BEGIN{ if(v>=0 && v<=0.02) print 1; else print 0 }')
             if [ "$_in_range" = "1" ]; then
                 KEY_DELAY="$_new_key_delay"
                 _updated=1
             else
-                _errors="${_errors}key_delay 超出范围 [0,1]; "
+                _errors="${_errors}key_delay 超出范围 [0,0.02] (0-20ms); "
             fi
         else
             _errors="${_errors}key_delay 不是合法数字; "
@@ -337,12 +337,12 @@ api_settings_post() {
 
     if [ -n "$_new_alt_delay" ]; then
         if printf '%s' "$_new_alt_delay" | grep -qE '^[0-9]+\.?[0-9]*$'; then
-            _in_range=$(awk -v v="$_new_alt_delay" 'BEGIN{ if(v>=0 && v<=2) print 1; else print 0 }')
+            _in_range=$(awk -v v="$_new_alt_delay" 'BEGIN{ if(v>=0 && v<=0.02) print 1; else print 0 }')
             if [ "$_in_range" = "1" ]; then
                 ALT_RELEASE_DELAY="$_new_alt_delay"
                 _updated=1
             else
-                _errors="${_errors}alt_release_delay 超出范围 [0,2]; "
+                _errors="${_errors}alt_release_delay 超出范围 [0,0.02] (0-20ms); "
             fi
         else
             _errors="${_errors}alt_release_delay 不是合法数字; "

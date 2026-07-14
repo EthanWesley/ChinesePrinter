@@ -18,8 +18,8 @@
 
 # ---- 全局状态 ----
 HID_DEVICE="${HID_DEVICE:-/dev/hidg0}"
-KEY_DELAY="${KEY_DELAY:-0.05}"         # 按键间隔（秒）
-ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.08}"  # 松开 Alt 前的等待
+KEY_DELAY="${KEY_DELAY:-0.005}"         # 按键间隔（秒，5ms）
+ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.008}"  # 松开 Alt 前的等待（8ms）
 
 # ---- 基础函数 ----
 
