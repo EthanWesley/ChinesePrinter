@@ -400,24 +400,28 @@ api_type() {
     _encoding=$(json_get "$_body" "encoding")
 
     # 提取 items 数组中的 code 和 control 字段
-    # 用 awk 逐项解析
+    # 用 awk 循环解析所有匹配项（match() 只找第一个，需手动循环）
     _items_file="$STATE_DIR/items.tmp"
     printf '%s' "$_body" | awk '
     BEGIN { in_items = 0 }
     /"items"/ { in_items = 1 }
     in_items {
-        # 查找 "code":数字
-        if (match($0, /"code"[ \t]*:[ \t]*[0-9]+/)) {
-            s = substr($0, RSTART, RLENGTH)
+        # 循环查找所有 "code":数字
+        rest = $0
+        while (match(rest, /"code"[ \t]*:[ \t]*[0-9]+/)) {
+            s = substr(rest, RSTART, RLENGTH)
             sub(/.*:[ \t]*/, "", s)
             print "code " s
+            rest = substr(rest, RSTART + RLENGTH)
         }
-        # 查找 "control":"字符串"
-        if (match($0, /"control"[ \t]*:[ \t]*"[^"]*"/)) {
-            s = substr($0, RSTART, RLENGTH)
+        # 循环查找所有 "control":"字符串"
+        rest = $0
+        while (match(rest, /"control"[ \t]*:[ \t]*"[^"]*"/)) {
+            s = substr(rest, RSTART, RLENGTH)
             sub(/.*:[ \t]*"/, "", s)
             sub(/"$/, "", s)
             print "control " s
+            rest = substr(rest, RSTART + RLENGTH)
         }
     }
     /\]/ { if (in_items) in_items = 0 }

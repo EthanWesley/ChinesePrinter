@@ -124,6 +124,9 @@ hid_type_alt_code() {
 
     # 4. 松开 Alt（触发目标电脑输入字符）
     hid_release_all
+
+    # 5. 字符间延时，让 Windows 完成字符输入后再开始下一个
+    sleep "$ALT_RELEASE_DELAY"
 }
 
 # ---- 控制字符 ----
