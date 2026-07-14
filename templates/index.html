@@ -146,9 +146,10 @@
     .log-entry .ts { color: var(--muted); margin-right: 6px; }
 
     .settings-row {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+      display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;
     }
-    @media (max-width: 600px) { .settings-row { grid-template-columns: 1fr; } }
+    @media (max-width: 800px) { .settings-row { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 500px) { .settings-row { grid-template-columns: 1fr; } }
     .setting-item { display: flex; flex-direction: column; gap: 8px; }
     .setting-head {
       display: flex; justify-content: space-between; align-items: center;
@@ -221,6 +222,7 @@
         <div class="info-item"><div class="k">服务端口</div><div class="v" id="infoPort">-</div></div>
         <div class="info-item"><div class="k">按键间隔</div><div class="v" id="infoDelay">-</div></div>
         <div class="info-item"><div class="k">Alt 释放延时</div><div class="v" id="infoAltDelay">-</div></div>
+        <div class="info-item"><div class="k">字符间隔延时</div><div class="v" id="infoCharDelay">-</div></div>
       </div>
     </div>
 
@@ -264,23 +266,34 @@
         <div class="setting-item">
           <div class="setting-head">
             <label class="field-label">按键间隔（每步按键之间的延时）</label>
-            <span class="setting-value" id="keyDelayValue">5 ms</span>
+            <span class="setting-value" id="keyDelayValue">0 ms</span>
           </div>
-          <input type="range" id="keyDelaySlider" min="0" max="20" step="1" value="5">
+          <input type="range" id="keyDelaySlider" min="0" max="100" step="1" value="0">
           <div class="setting-desc">
-            范围: <code id="keyDelayRange">0 ~ 20 ms</code> ·
-            值越小打字越快，但太快可能丢键
+            范围: <code id="keyDelayRange">0 ~ 100 ms</code> ·
+            单次按键之间的延时，0 最快，出现乱码时适当增大
           </div>
         </div>
         <div class="setting-item">
           <div class="setting-head">
             <label class="field-label">Alt 释放延时（松开 Alt 前的等待）</label>
-            <span class="setting-value" id="altDelayValue">8 ms</span>
+            <span class="setting-value" id="altDelayValue">0 ms</span>
           </div>
-          <input type="range" id="altDelaySlider" min="0" max="20" step="1" value="8">
+          <input type="range" id="altDelaySlider" min="0" max="100" step="1" value="0">
           <div class="setting-desc">
-            范围: <code id="altDelayRange">0 ~ 20 ms</code> ·
-            太短可能导致字符未被目标电脑识别
+            范围: <code id="altDelayRange">0 ~ 100 ms</code> ·
+            松开 Alt 触发字符输入前的等待，太短可能导致字符未被目标电脑识别
+          </div>
+        </div>
+        <div class="setting-item">
+          <div class="setting-head">
+            <label class="field-label">字符间隔延时（两个字符之间的等待）</label>
+            <span class="setting-value" id="charDelayValue">0 ms</span>
+          </div>
+          <input type="range" id="charDelaySlider" min="0" max="100" step="1" value="0">
+          <div class="setting-desc">
+            范围: <code id="charDelayRange">0 ~ 100 ms</code> ·
+            连续输入多个字符时的间隔，出现乱码或丢字时适当增大
           </div>
         </div>
       </div>
@@ -465,12 +478,15 @@
       $("infoDeviceOk").textContent = r.device_exists ? "已连接" : "未找到";
       $("infoDeviceOk").className = "v " + (r.device_exists ? "ok" : "bad");
       $("infoPort").textContent = r.port || "-";
-      // 延时以毫秒显示（与滑块单位一致）
+      // 延时以毫秒显示（与滑块单位一致），仅在未编辑时同步后端值
       if (r.key_delay !== undefined && !_settingsDirty) {
         $("infoDelay").textContent = secToMs(r.key_delay) + " ms";
       }
       if (r.alt_release_delay !== undefined && !_settingsDirty) {
         $("infoAltDelay").textContent = secToMs(r.alt_release_delay) + " ms";
+      }
+      if (r.char_delay !== undefined && !_settingsDirty) {
+        $("infoCharDelay").textContent = secToMs(r.char_delay) + " ms";
       }
 
       // 更新设备选择下拉框
@@ -570,9 +586,10 @@
       }
     }
 
-    // ---------- 延时设置（单位: 毫秒，范围 0-20） ----------
-    const DEFAULT_KEY_DELAY_MS = 5;
-    const DEFAULT_ALT_DELAY_MS = 8;
+    // ---------- 延时设置（单位: 毫秒，范围 0-100） ----------
+    const DEFAULT_KEY_DELAY_MS = 0;
+    const DEFAULT_ALT_DELAY_MS = 0;
+    const DEFAULT_CHAR_DELAY_MS = 0;
     let _settingsDirty = false;
 
     // 秒（后端单位）转毫秒（滑块单位）
@@ -580,14 +597,17 @@
     // 毫秒（滑块单位）转秒（后端单位）
     function msToSec(ms) { return parseInt(ms, 10) / 1000; }
 
-    function initDelaySliders(keyDelaySec, altDelaySec) {
-      // 从后端秒值转换，并限制在 0-20ms 范围
+    function initDelaySliders(keyDelaySec, altDelaySec, charDelaySec) {
+      // 从后端秒值转换，并限制在 0-100ms 范围
       let kMs = secToMs(keyDelaySec);
       let aMs = secToMs(altDelaySec);
-      kMs = Math.min(20, Math.max(0, kMs));
-      aMs = Math.min(20, Math.max(0, aMs));
+      let cMs = secToMs(charDelaySec);
+      kMs = Math.min(100, Math.max(0, kMs));
+      aMs = Math.min(100, Math.max(0, aMs));
+      cMs = Math.min(100, Math.max(0, cMs));
       $("keyDelaySlider").value = kMs;
       $("altDelaySlider").value = aMs;
+      $("charDelaySlider").value = cMs;
       updateDelayDisplay();
       _settingsDirty = false;
       updateSettingsStatus();
@@ -596,11 +616,14 @@
     function updateDelayDisplay() {
       const kMs = parseInt($("keyDelaySlider").value, 10);
       const aMs = parseInt($("altDelaySlider").value, 10);
+      const cMs = parseInt($("charDelaySlider").value, 10);
       $("keyDelayValue").textContent = kMs + " ms";
       $("altDelayValue").textContent = aMs + " ms";
+      $("charDelayValue").textContent = cMs + " ms";
       // 设备信息卡片同步显示毫秒
       $("infoDelay").textContent = kMs + " ms";
       $("infoAltDelay").textContent = aMs + " ms";
+      $("infoCharDelay").textContent = cMs + " ms";
     }
 
     function updateSettingsStatus() {
@@ -627,17 +650,25 @@
       _settingsDirty = true;
       updateSettingsStatus();
     });
+    $("charDelaySlider").addEventListener("input", () => {
+      updateDelayDisplay();
+      _settingsDirty = true;
+      updateSettingsStatus();
+    });
 
     $("saveSettingsBtn").addEventListener("click", async () => {
       const kMs = parseInt($("keyDelaySlider").value, 10);
       const aMs = parseInt($("altDelaySlider").value, 10);
+      const cMs = parseInt($("charDelaySlider").value, 10);
       // 提交时转换为秒（后端 sleep 接受小数秒）
       const keyDelaySec = msToSec(kMs);
       const altDelaySec = msToSec(aMs);
-      log(`保存延时设置: 按键间隔=${kMs}ms, Alt释放=${aMs}ms`);
+      const charDelaySec = msToSec(cMs);
+      log(`保存延时设置: 按键间隔=${kMs}ms, Alt释放=${aMs}ms, 字符间隔=${cMs}ms`);
       const r = await api("/api/settings", "POST", {
         key_delay: keyDelaySec,
         alt_release_delay: altDelaySec,
+        char_delay: charDelaySec,
       });
       if (r.ok) {
         _settingsDirty = false;
@@ -653,6 +684,7 @@
     $("resetSettingsBtn").addEventListener("click", () => {
       $("keyDelaySlider").value = DEFAULT_KEY_DELAY_MS;
       $("altDelaySlider").value = DEFAULT_ALT_DELAY_MS;
+      $("charDelaySlider").value = DEFAULT_CHAR_DELAY_MS;
       updateDelayDisplay();
       _settingsDirty = true;
       updateSettingsStatus();
@@ -733,7 +765,8 @@
       if (r.ok !== false) {
         initDelaySliders(
           r.key_delay !== undefined ? r.key_delay : msToSec(DEFAULT_KEY_DELAY_MS),
-          r.alt_release_delay !== undefined ? r.alt_release_delay : msToSec(DEFAULT_ALT_DELAY_MS)
+          r.alt_release_delay !== undefined ? r.alt_release_delay : msToSec(DEFAULT_ALT_DELAY_MS),
+          r.char_delay !== undefined ? r.char_delay : msToSec(DEFAULT_CHAR_DELAY_MS)
         );
       }
       // 定时刷新状态

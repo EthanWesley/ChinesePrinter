@@ -21,8 +21,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="${INSTALL_DIR:-$SCRIPT_DIR}"
 PORT="${APP_PORT:-8848}"
 HID_DEVICE="${HID_DEVICE:-/dev/hidg0}"
-KEY_DELAY="${KEY_DELAY:-0.005}"
-ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.008}"
+KEY_DELAY="${KEY_DELAY:-0}"
+ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0}"
+CHAR_DELAY="${CHAR_DELAY:-0}"
 STATE_DIR="${STATE_DIR:-/tmp/chinese-printer}"
 SETTINGS_FILE="$STATE_DIR/settings.env"
 DEVICE_FILE="$STATE_DIR/current_device"
@@ -254,14 +255,15 @@ api_health() {
 
     # 读取当前延时设置
     . "$SETTINGS_FILE" 2>/dev/null
-    _cur_key_delay="${KEY_DELAY:-0.05}"
-    _cur_alt_delay="${ALT_RELEASE_DELAY:-0.08}"
+    _cur_key_delay="${KEY_DELAY:-0}"
+    _cur_alt_delay="${ALT_RELEASE_DELAY:-0}"
+    _cur_char_delay="${CHAR_DELAY:-0}"
 
     # 列出所有设备
     _all_devices=$(list_hid_devices)
 
     cat <<EOF
-{"ok":true,"busy":${_busy:-false},"progress":${_progress:-0},"total":${_total:-0},"encoding":"${_encoding:-}","last_error":"${_last_error:-}","device":"$_cur_device","device_exists":$_device_exists,"device_type":"$_device_type","all_devices":$_all_devices,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"port":$PORT}
+{"ok":true,"busy":${_busy:-false},"progress":${_progress:-0},"total":${_total:-0},"encoding":"${_encoding:-}","last_error":"${_last_error:-}","device":"$_cur_device","device_exists":$_device_exists,"device_type":"$_device_type","all_devices":$_all_devices,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"char_delay":$_cur_char_delay,"port":$PORT}
 EOF
 }
 
@@ -302,10 +304,11 @@ api_device_post() {
 # ---- API: /api/settings (GET) ----
 api_settings_get() {
     . "$SETTINGS_FILE" 2>/dev/null
-    _cur_key_delay="${KEY_DELAY:-0.005}"
-    _cur_alt_delay="${ALT_RELEASE_DELAY:-0.008}"
+    _cur_key_delay="${KEY_DELAY:-0}"
+    _cur_alt_delay="${ALT_RELEASE_DELAY:-0}"
+    _cur_char_delay="${CHAR_DELAY:-0}"
     cat <<EOF
-{"ok":true,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"key_delay_min":0,"key_delay_max":0.02,"alt_delay_min":0,"alt_delay_max":0.02}
+{"ok":true,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"char_delay":$_cur_char_delay,"key_delay_min":0,"key_delay_max":0.1,"alt_delay_min":0,"alt_delay_max":0.1,"char_delay_min":0,"char_delay_max":0.1}
 EOF
 }
 
@@ -315,20 +318,20 @@ api_settings_post() {
     _body="$1"
     _new_key_delay=$(json_get "$_body" "key_delay")
     _new_alt_delay=$(json_get "$_body" "alt_release_delay")
+    _new_char_delay=$(json_get "$_body" "char_delay")
 
     _updated=0
     _errors=""
 
     if [ -n "$_new_key_delay" ]; then
-        # 验证是数字且在范围内（0-20ms = 0-0.02s）
+        # 验证是数字且在范围内（0-100ms = 0-0.1s）
         if printf '%s' "$_new_key_delay" | grep -qE '^[0-9]+\.?[0-9]*$'; then
-            # 用 awk 比较范围
-            _in_range=$(awk -v v="$_new_key_delay" 'BEGIN{ if(v>=0 && v<=0.02) print 1; else print 0 }')
+            _in_range=$(awk -v v="$_new_key_delay" 'BEGIN{ if(v>=0 && v<=0.1) print 1; else print 0 }')
             if [ "$_in_range" = "1" ]; then
                 KEY_DELAY="$_new_key_delay"
                 _updated=1
             else
-                _errors="${_errors}key_delay 超出范围 [0,0.02] (0-20ms); "
+                _errors="${_errors}key_delay 超出范围 [0,0.1] (0-100ms); "
             fi
         else
             _errors="${_errors}key_delay 不是合法数字; "
@@ -337,15 +340,29 @@ api_settings_post() {
 
     if [ -n "$_new_alt_delay" ]; then
         if printf '%s' "$_new_alt_delay" | grep -qE '^[0-9]+\.?[0-9]*$'; then
-            _in_range=$(awk -v v="$_new_alt_delay" 'BEGIN{ if(v>=0 && v<=0.02) print 1; else print 0 }')
+            _in_range=$(awk -v v="$_new_alt_delay" 'BEGIN{ if(v>=0 && v<=0.1) print 1; else print 0 }')
             if [ "$_in_range" = "1" ]; then
                 ALT_RELEASE_DELAY="$_new_alt_delay"
                 _updated=1
             else
-                _errors="${_errors}alt_release_delay 超出范围 [0,0.02] (0-20ms); "
+                _errors="${_errors}alt_release_delay 超出范围 [0,0.1] (0-100ms); "
             fi
         else
             _errors="${_errors}alt_release_delay 不是合法数字; "
+        fi
+    fi
+
+    if [ -n "$_new_char_delay" ]; then
+        if printf '%s' "$_new_char_delay" | grep -qE '^[0-9]+\.?[0-9]*$'; then
+            _in_range=$(awk -v v="$_new_char_delay" 'BEGIN{ if(v>=0 && v<=0.1) print 1; else print 0 }')
+            if [ "$_in_range" = "1" ]; then
+                CHAR_DELAY="$_new_char_delay"
+                _updated=1
+            else
+                _errors="${_errors}char_delay 超出范围 [0,0.1] (0-100ms); "
+            fi
+        else
+            _errors="${_errors}char_delay 不是合法数字; "
         fi
     fi
 
@@ -363,9 +380,10 @@ api_settings_post() {
     cat > "$SETTINGS_FILE" <<EOF
 KEY_DELAY=$KEY_DELAY
 ALT_RELEASE_DELAY=$ALT_RELEASE_DELAY
+CHAR_DELAY=$CHAR_DELAY
 EOF
-    log "延时设置已更新: key_delay=$KEY_DELAY, alt_release_delay=$ALT_RELEASE_DELAY"
-    printf '{"ok":true,"msg":"设置已更新","key_delay":%s,"alt_release_delay":%s}' "$KEY_DELAY" "$ALT_RELEASE_DELAY"
+    log "延时设置已更新: key_delay=$KEY_DELAY, alt_release_delay=$ALT_RELEASE_DELAY, char_delay=$CHAR_DELAY"
+    printf '{"ok":true,"msg":"设置已更新","key_delay":%s,"alt_release_delay":%s,"char_delay":%s}' "$KEY_DELAY" "$ALT_RELEASE_DELAY" "$CHAR_DELAY"
 }
 
 # ---- API: /api/stop (POST) ----
@@ -441,8 +459,9 @@ api_type() {
         . "$INSTALL_DIR/hid_keyboard.sh"
         # 重新加载最新延时设置
         . "$SETTINGS_FILE" 2>/dev/null
-        KEY_DELAY="${KEY_DELAY:-0.05}"
-        ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.08}"
+        KEY_DELAY="${KEY_DELAY:-0}"
+        ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0}"
+        CHAR_DELAY="${CHAR_DELAY:-0}"
 
         # 初始化 HID（使用运行时选择的设备）
         if ! hid_init "$_cur_device" 2>/dev/null; then

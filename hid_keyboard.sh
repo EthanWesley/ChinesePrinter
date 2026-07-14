@@ -18,8 +18,9 @@
 
 # ---- 全局状态 ----
 HID_DEVICE="${HID_DEVICE:-/dev/hidg0}"
-KEY_DELAY="${KEY_DELAY:-0.005}"         # 按键间隔（秒，5ms）
-ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.008}"  # 松开 Alt 前的等待（8ms）
+KEY_DELAY="${KEY_DELAY:-0}"               # 按键间隔（秒，0=最快）
+ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0}"  # 松开 Alt 前的等待（秒，0=最快）
+CHAR_DELAY="${CHAR_DELAY:-0}"             # 字符间延时（秒，0=最快，防乱码用）
 
 # ---- 安全延时函数 ----
 # 当值为 0 或空时直接返回，避免 sleep 0 的进程创建开销（约 40ms/次）
@@ -145,7 +146,8 @@ hid_type_alt_code() {
     hid_release_all
 
     # 5. 字符间延时，让 Windows 完成字符输入后再开始下一个
-    _delay "$ALT_RELEASE_DELAY"
+    # 用独立的 CHAR_DELAY，便于网页单独调节防乱码延时
+    _delay "$CHAR_DELAY"
 }
 
 # ---- 控制字符 ----
