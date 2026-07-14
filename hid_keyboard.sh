@@ -21,6 +21,16 @@ HID_DEVICE="${HID_DEVICE:-/dev/hidg0}"
 KEY_DELAY="${KEY_DELAY:-0.005}"         # 按键间隔（秒，5ms）
 ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.008}"  # 松开 Alt 前的等待（8ms）
 
+# ---- 安全延时函数 ----
+# 当值为 0 或空时直接返回，避免 sleep 0 的进程创建开销（约 40ms/次）
+# shell 的 sleep 即使参数为 0 也要 fork+exec 子进程，这是打字慢的根源
+_delay() {
+    case "$1" in
+        0|0.0|0.00|0.000|"") return ;;
+        *) sleep "$1" ;;
+    esac
+}
+
 # ---- 基础函数 ----
 
 # 发送一个 8 字节 HID 报告
@@ -33,21 +43,28 @@ hid_send() {
     _kc4="${5:-0}"
     _kc5="${6:-0}"
     _kc6="${7:-0}"
-    # 用 printf 写二进制（\x00 表示 0x00 字节）
-    printf "\\x$(printf '%02x' "$_mod")\\x00\\x$(printf '%02x' "$_kc1")\\x$(printf '%02x' "$_kc2")\\x$(printf '%02x' "$_kc3")\\x$(printf '%02x' "$_kc4")\\x$(printf '%02x' "$_kc5")\\x$(printf '%02x' "$_kc6")" > "$HID_DEVICE"
+    # 预计算十六进制（避免嵌套 $(printf) 子进程）
+    _h_mod=$(printf '%02x' "$_mod")
+    _h_kc1=$(printf '%02x' "$_kc1")
+    _h_kc2=$(printf '%02x' "$_kc2")
+    _h_kc3=$(printf '%02x' "$_kc3")
+    _h_kc4=$(printf '%02x' "$_kc4")
+    _h_kc5=$(printf '%02x' "$_kc5")
+    _h_kc6=$(printf '%02x' "$_kc6")
+    printf "\\x${_h_mod}\\x00\\x${_h_kc1}\\x${_h_kc2}\\x${_h_kc3}\\x${_h_kc4}\\x${_h_kc5}\\x${_h_kc6}" > "$HID_DEVICE"
 }
 
 # 发送空报告（松开所有键）
 hid_release_all() {
     printf '\x00\x00\x00\x00\x00\x00\x00\x00' > "$HID_DEVICE"
-    sleep "$KEY_DELAY"
+    _delay "$KEY_DELAY"
 }
 
 # 按住左 Alt（不松开）
 hid_press_alt() {
     # modifier bit2 = LAlt = 0x04
     printf '\x04\x00\x00\x00\x00\x00\x00\x00' > "$HID_DEVICE"
-    sleep "$KEY_DELAY"
+    _delay "$KEY_DELAY"
 }
 
 # 按下并松开一个键
@@ -56,45 +73,47 @@ hid_press_release() {
     _mod="${1:-0}"
     _kc="${2:-0}"
     # 按下
-    printf "\\x$(printf '%02x' "$_mod")\\x00\\x$(printf '%02x' "$_kc")\\x00\\x00\\x00\\x00\\x00" > "$HID_DEVICE"
-    sleep "$KEY_DELAY"
+    _h_mod=$(printf '%02x' "$_mod")
+    _h_kc=$(printf '%02x' "$_kc")
+    printf "\\x${_h_mod}\\x00\\x${_h_kc}\\x00\\x00\\x00\\x00\\x00" > "$HID_DEVICE"
+    _delay "$KEY_DELAY"
     # 松开
     printf '\x00\x00\x00\x00\x00\x00\x00\x00' > "$HID_DEVICE"
-    sleep "$KEY_DELAY"
+    _delay "$KEY_DELAY"
 }
 
 # ---- 小键盘数字键码 ----
-# Numpad 0-9 的 HID keycode（返回十进制值，供 hid_send 使用）
-# Numpad0=0x62(98), Numpad1=0x59(89), Numpad2=0x5A(90), Numpad3=0x5B(91),
-# Numpad4=0x5C(92), Numpad5=0x5D(93), Numpad6=0x5E(94), Numpad7=0x5F(95),
-# Numpad8=0x60(96), Numpad9=0x61(97)
-_numpad_keycode() {
+# Numpad 0-9 的 HID keycode（返回十六进制字符串，直接用于 printf \x 转义）
+# Numpad0=0x62, Numpad1=0x59, Numpad2=0x5A, Numpad3=0x5B,
+# Numpad4=0x5C, Numpad5=0x5D, Numpad6=0x5E, Numpad7=0x5F,
+# Numpad8=0x60, Numpad9=0x61
+_numpad_keycode_hex() {
     case "$1" in
-        0) echo "98" ;;
-        1) echo "89" ;;
-        2) echo "90" ;;
-        3) echo "91" ;;
-        4) echo "92" ;;
-        5) echo "93" ;;
-        6) echo "94" ;;
-        7) echo "95" ;;
-        8) echo "96" ;;
-        9) echo "97" ;;
-        *) echo "0" ;;
+        0) echo "62" ;;
+        1) echo "59" ;;
+        2) echo "5a" ;;
+        3) echo "5b" ;;
+        4) echo "5c" ;;
+        5) echo "5d" ;;
+        6) echo "5e" ;;
+        7) echo "5f" ;;
+        8) echo "60" ;;
+        9) echo "61" ;;
+        *) echo "00" ;;
     esac
 }
 
 # 在小键盘上敲一个数字（0-9），保持 Alt 按下
 # 参数: $1=数字字符
 hid_type_numpad_digit() {
-    _digit="$1"
-    _kc=$(_numpad_keycode "$_digit")
+    _hc=$(_numpad_keycode_hex "$1")
     # 按下键（Alt 仍按住，modifier=0x04）
-    hid_send 4 "$_kc"
-    sleep "$KEY_DELAY"
+    # 直接用变量展开构造 printf 格式字符串，避免 hid_send 的多次 printf '%02x'
+    printf "\\x04\\x00\\x${_hc}\\x00\\x00\\x00\\x00\\x00" > "$HID_DEVICE"
+    _delay "$KEY_DELAY"
     # 松开键（Alt 仍按住）
-    hid_send 4 0
-    sleep "$KEY_DELAY"
+    printf '\x04\x00\x00\x00\x00\x00\x00\x00' > "$HID_DEVICE"
+    _delay "$KEY_DELAY"
 }
 
 # ---- Alt 码打字 ----
@@ -120,13 +139,13 @@ hid_type_alt_code() {
     done
 
     # 3. 等待一下，让目标电脑处理
-    sleep "$ALT_RELEASE_DELAY"
+    _delay "$ALT_RELEASE_DELAY"
 
     # 4. 松开 Alt（触发目标电脑输入字符）
     hid_release_all
 
     # 5. 字符间延时，让 Windows 完成字符输入后再开始下一个
-    sleep "$ALT_RELEASE_DELAY"
+    _delay "$ALT_RELEASE_DELAY"
 }
 
 # ---- 控制字符 ----
