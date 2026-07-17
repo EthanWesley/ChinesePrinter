@@ -455,43 +455,84 @@ api_type() {
     # 启动后台打字任务
     rm -f "$STOP_FLAG"
     (
-        # 加载 HID 控制
-        . "$INSTALL_DIR/hid_keyboard.sh"
         # 重新加载最新延时设置
         . "$SETTINGS_FILE" 2>/dev/null
         KEY_DELAY="${KEY_DELAY:-0}"
         ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0}"
         CHAR_DELAY="${CHAR_DELAY:-0}"
 
-        # 初始化 HID（使用运行时选择的设备）
-        if ! hid_init "$_cur_device" 2>/dev/null; then
-            update_status false 0 "$_total" "$_encoding" "HID 初始化失败"
-            exit 1
+        # CHAR_DELAY 秒转毫秒（C 程序用毫秒）
+        _char_delay_ms=$(awk -v s="$CHAR_DELAY" 'BEGIN{ v=s*1000; if(v<0)v=0; printf "%.0f", v }')
+
+        # 检测 C 原生加速器
+        _use_native=0
+        if [ -x "$INSTALL_DIR/hid_writer" ]; then
+            _use_native=1
         fi
 
         update_status true 0 "$_total" "$_encoding" ""
-        log "开始打字: 编码=$_encoding, 共 $_total 项"
 
-        _progress=0
-        while IFS=' ' read -r _type _value; do
-            # 检查停止标志
-            if [ -f "$STOP_FLAG" ]; then
-                log "用户中止打字（已完成 $_progress/$_total）"
-                break
+        if [ "$_use_native" = "1" ]; then
+            # ===== C 原生加速路径（快 50-100 倍）=====
+            log "开始打字(C加速): 编码=$_encoding, 共 $_total 项, char_delay=${_char_delay_ms}ms"
+
+            # 后台启动 C 程序
+            cat "$_items_file" | "$INSTALL_DIR/hid_writer" \
+                --device "$_cur_device" \
+                --char-delay "$_char_delay_ms" \
+                --batch 5 \
+                --verbose >> "$LOG_FILE" 2>&1 &
+            _writer_pid=$!
+
+            # 监控停止标志（C 程序不检查 STOP_FLAG，需外部 kill）
+            while kill -0 "$_writer_pid" 2>/dev/null; do
+                if [ -f "$STOP_FLAG" ]; then
+                    kill "$_writer_pid" 2>/dev/null
+                    wait "$_writer_pid" 2>/dev/null
+                    log "用户中止打字（C 程序已终止）"
+                    break
+                fi
+                # 短暂等待（C 程序很快，100ms 轮询足够）
+                sleep 0.1 2>/dev/null || sleep 1
+            done
+            wait "$_writer_pid" 2>/dev/null
+
+            _progress=$_total
+            update_status true "$_progress" "$_total" "$_encoding" ""
+        else
+            # ===== Shell 回退路径 =====
+            # 加载 HID 控制
+            . "$INSTALL_DIR/hid_keyboard.sh"
+
+            # 初始化 HID（使用运行时选择的设备）
+            if ! hid_init "$_cur_device" 2>/dev/null; then
+                update_status false 0 "$_total" "$_encoding" "HID 初始化失败"
+                exit 1
             fi
 
-            case "$_type" in
-                code)
-                    hid_type_alt_code "$_value"
-                    ;;
-                control)
-                    hid_type_control_char "$_value"
-                    ;;
-            esac
+            log "开始打字(Shell): 编码=$_encoding, 共 $_total 项"
 
-            _progress=$((_progress + 1))
-            update_status true "$_progress" "$_total" "$_encoding" ""
-        done < "$_items_file"
+            _progress=0
+            while IFS=' ' read -r _type _value; do
+                # 检查停止标志
+                if [ -f "$STOP_FLAG" ]; then
+                    log "用户中止打字（已完成 $_progress/$_total）"
+                    break
+                fi
+
+                case "$_type" in
+                    code)
+                        hid_type_alt_code "$_value"
+                        ;;
+                    control)
+                        hid_type_control_char "$_value"
+                        ;;
+                esac
+
+                _progress=$((_progress + 1))
+                update_status true "$_progress" "$_total" "$_encoding" ""
+            done < "$_items_file"
+        fi
 
         rm -f "$_items_file" "$STOP_FLAG"
         update_status false "$_progress" "$_total" "$_encoding" ""

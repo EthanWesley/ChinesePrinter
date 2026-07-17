@@ -231,6 +231,21 @@ for f in server.sh hid_keyboard.sh; do
     ok "已安装: $f"
 done
 
+# 复制 C 原生加速器（如果存在）
+if [ -f "$SCRIPT_DIR/native/hid_writer" ]; then
+    cp "$SCRIPT_DIR/native/hid_writer" "$INSTALL_DIR/hid_writer"
+    chmod 755 "$INSTALL_DIR/hid_writer"
+    # 验证是否能执行
+    if "$INSTALL_DIR/hid_writer" --help >/dev/null 2>&1; then
+        ok "已安装: hid_writer (C 原生加速器, 已启用)"
+    else
+        warn "hid_writer 安装但无法执行 (可能是架构不匹配), 将回退到 Shell 模式"
+        rm -f "$INSTALL_DIR/hid_writer"
+    fi
+else
+    info "未找到 C 原生加速器 (native/hid_writer), 使用 Shell 模式"
+fi
+
 # 复制 HTML 和 GBK 编码表
 for f in index.html gbk_table.json; do
     src="$SCRIPT_DIR/templates/$f"
