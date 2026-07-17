@@ -477,10 +477,11 @@ api_type() {
             log "开始打字(C加速): 编码=$_encoding, 共 $_total 项, char_delay=${_char_delay_ms}ms"
 
             # 后台启动 C 程序
+            # --report-delay 10: 每个 HID 报告间 10ms（匹配 USB bInterval，防 Alt 卡住）
             cat "$_items_file" | "$INSTALL_DIR/hid_writer" \
                 --device "$_cur_device" \
+                --report-delay 10 \
                 --char-delay "$_char_delay_ms" \
-                --batch 5 \
                 --verbose >> "$LOG_FILE" 2>&1 &
             _writer_pid=$!
 
