@@ -97,7 +97,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # ---- 自动下载源文件（支持 curl | sh 一键安装/更新）----
 # 如果当前目录没有 server.sh，说明是通过管道运行的，自动从 GitHub 下载
 if [ ! -f "$SCRIPT_DIR/server.sh" ]; then
-    _TMP_DIR=$(mktemp -d 2>/dev/null || mkdir -p /tmp/cp-install-$$ && echo /tmp/cp-install-$$)
+    # 注意: 不能用 `mktemp -d || mkdir ... && echo ...`，因为 || 和 && 优先级相同、左结合，
+    # 会导致 mktemp 成功时 echo 仍执行，_TMP_DIR 含两个路径（换行分隔）使后续路径无效
+    _TMP_DIR=$(mktemp -d 2>/dev/null) || { _TMP_DIR="/tmp/cp-install-$$"; mkdir -p "$_TMP_DIR"; }
     # 多源回退：codeload(官方) -> gh-proxy(国内代理) -> github archive
     _MIRRORS="
 https://codeload.github.com/EthanWesley/ChinesePrinter/tar.gz/refs/heads/main
