@@ -6,17 +6,39 @@
   <title>中文打字机 - ChinesePrinter</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    :root {
+    /* 夜间主题（默认） */
+    :root, [data-theme="dark"] {
       --bg: #0f1117;
+      --bg-soft: #161924;
       --card: #1a1d27;
       --card-2: #252836;
       --border: #2d3142;
       --text: #e4e6eb;
       --muted: #8b8fa3;
       --accent: #5b9dff;
+      --accent-soft: rgba(91, 157, 255, 0.15);
       --green: #3ecf8e;
       --red: #ff5c5c;
       --orange: #ffb547;
+      --shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      --log-bg: #0a0c12;
+    }
+    /* 白天主题 */
+    [data-theme="light"] {
+      --bg: #f5f7fa;
+      --bg-soft: #ffffff;
+      --card: #ffffff;
+      --card-2: #f1f3f9;
+      --border: #e1e5ee;
+      --text: #1a1d27;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --accent-soft: rgba(37, 99, 235, 0.08);
+      --green: #059669;
+      --red: #dc2626;
+      --orange: #d97706;
+      --shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      --log-bg: #fafbfc;
     }
     body {
       background: var(--bg);
@@ -24,39 +46,63 @@
       font-family: -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
       min-height: 100vh;
       padding: 20px;
+      transition: background 0.3s, color 0.3s;
     }
     .container { max-width: 900px; margin: 0 auto; }
     .header {
       display: flex; justify-content: space-between; align-items: center;
       margin-bottom: 24px; flex-wrap: wrap; gap: 12px;
     }
+    .header-left { display: flex; align-items: center; gap: 12px; }
     .header h1 { font-size: 24px; font-weight: 600; }
     .header h1 .icon { margin-right: 8px; }
-    .header .version { font-size: 12px; color: var(--muted); }
+    .header .version {
+      font-size: 12px; color: var(--muted);
+      padding: 3px 10px; background: var(--card-2);
+      border: 1px solid var(--border); border-radius: 12px;
+    }
+    .header-right { display: flex; align-items: center; gap: 8px; }
+    /* 主题切换按钮 */
+    .theme-toggle {
+      width: 38px; height: 38px; border-radius: 50%;
+      background: var(--card-2); border: 1px solid var(--border);
+      color: var(--text); cursor: pointer; font-size: 18px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s; padding: 0;
+    }
+    .theme-toggle:hover {
+      border-color: var(--accent);
+      transform: rotate(15deg);
+    }
 
     .card {
       background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px;
+      border-radius: 14px;
+      padding: 22px;
       margin-bottom: 16px;
+      box-shadow: var(--shadow);
+      transition: background 0.3s, border-color 0.3s;
     }
     .card-title {
-      font-size: 14px; font-weight: 600; color: var(--muted);
-      margin-bottom: 16px; display: flex; justify-content: space-between;
+      font-size: 15px; font-weight: 600; color: var(--text);
+      margin-bottom: 18px; display: flex; justify-content: space-between;
       align-items: center;
     }
     .card-title .tip { font-size: 12px; color: var(--muted); font-weight: 400; }
 
     textarea {
-      width: 100%; min-height: 120px;
+      width: 100%; min-height: 220px;
       background: var(--card-2); color: var(--text);
-      border: 1px solid var(--border); border-radius: 8px;
-      padding: 12px; font-size: 16px; font-family: inherit;
-      resize: vertical; outline: none;
-      transition: border-color 0.2s;
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 14px; font-size: 16px; font-family: inherit;
+      line-height: 1.6; resize: vertical; outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
-    textarea:focus { border-color: var(--accent); }
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
     textarea::placeholder { color: var(--muted); }
 
     .controls {
@@ -133,8 +179,8 @@
     .info-item .v.bad { color: var(--red); }
 
     .log {
-      background: #0a0c12; border: 1px solid var(--border);
-      border-radius: 8px; padding: 12px;
+      background: var(--log-bg); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px;
       height: 180px; overflow-y: auto;
       font-family: "Consolas", monospace; font-size: 12px;
       line-height: 1.6;
@@ -204,32 +250,12 @@
 <body>
   <div class="container">
     <div class="header">
-      <h1><span class="icon">⌨️</span>中文打字机</h1>
-      <span class="version">Shell Edition · v2.0</span>
-    </div>
-
-    <!-- 设备信息 -->
-    <div class="card">
-      <div class="card-title">
-        <span>设备信息</span>
-        <span class="tip" id="refreshTip">自动刷新</span>
+      <div class="header-left">
+        <h1><span class="icon">⌨️</span>中文打字机</h1>
+        <span class="version">Shell Edition · v2.0</span>
       </div>
-      <!-- HID 设备切换 -->
-      <div class="device-selector">
-        <label for="deviceSelect" class="field-label">切换 HID 设备:</label>
-        <select id="deviceSelect">
-          <option value="">加载中...</option>
-        </select>
-        <span class="tip" id="deviceSwitchTip"></span>
-      </div>
-      <div class="info-grid">
-        <div class="info-item"><div class="k">HID 设备</div><div class="v" id="infoDevice">-</div></div>
-        <div class="info-item"><div class="k">设备类型</div><div class="v" id="infoDeviceType">-</div></div>
-        <div class="info-item"><div class="k">设备状态</div><div class="v" id="infoDeviceOk">-</div></div>
-        <div class="info-item"><div class="k">服务端口</div><div class="v" id="infoPort">-</div></div>
-        <div class="info-item"><div class="k">按键间隔</div><div class="v" id="infoDelay">-</div></div>
-        <div class="info-item"><div class="k">Alt 释放延时</div><div class="v" id="infoAltDelay">-</div></div>
-        <div class="info-item"><div class="k">字符间隔延时</div><div class="v" id="infoCharDelay">-</div></div>
+      <div class="header-right">
+        <button class="theme-toggle" id="themeToggle" title="切换主题" type="button">🌙</button>
       </div>
     </div>
 
@@ -348,6 +374,31 @@
       </div>
       <div class="log" id="logBox"></div>
     </div>
+
+    <!-- 设备信息（移至底部） -->
+    <div class="card">
+      <div class="card-title">
+        <span>设备信息</span>
+        <span class="tip" id="refreshTip">自动刷新</span>
+      </div>
+      <!-- HID 设备切换 -->
+      <div class="device-selector">
+        <label for="deviceSelect" class="field-label">切换 HID 设备:</label>
+        <select id="deviceSelect">
+          <option value="">加载中...</option>
+        </select>
+        <span class="tip" id="deviceSwitchTip"></span>
+      </div>
+      <div class="info-grid">
+        <div class="info-item"><div class="k">HID 设备</div><div class="v" id="infoDevice">-</div></div>
+        <div class="info-item"><div class="k">设备类型</div><div class="v" id="infoDeviceType">-</div></div>
+        <div class="info-item"><div class="k">设备状态</div><div class="v" id="infoDeviceOk">-</div></div>
+        <div class="info-item"><div class="k">服务端口</div><div class="v" id="infoPort">-</div></div>
+        <div class="info-item"><div class="k">按键间隔</div><div class="v" id="infoDelay">-</div></div>
+        <div class="info-item"><div class="k">Alt 释放延时</div><div class="v" id="infoAltDelay">-</div></div>
+        <div class="info-item"><div class="k">字符间隔延时</div><div class="v" id="infoCharDelay">-</div></div>
+      </div>
+    </div>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -356,6 +407,28 @@
     // ---------- 工具函数 ----------
     const $ = id => document.getElementById(id);
     const logBox = $("logBox");
+
+    // ---------- 主题切换 ----------
+    function applyTheme(t) {
+      document.documentElement.setAttribute("data-theme", t);
+      const btn = $("themeToggle");
+      if (btn) btn.textContent = t === "light" ? "☀️" : "🌙";
+      try { localStorage.setItem("cp-theme", t); } catch (e) {}
+    }
+    (function initTheme() {
+      let saved = "dark";
+      try { saved = localStorage.getItem("cp-theme") || "dark"; } catch (e) {}
+      applyTheme(saved);
+    })();
+    document.addEventListener("DOMContentLoaded", () => {
+      const btn = $("themeToggle");
+      if (btn) {
+        btn.addEventListener("click", () => {
+          const cur = document.documentElement.getAttribute("data-theme") || "dark";
+          applyTheme(cur === "dark" ? "light" : "dark");
+        });
+      }
+    });
 
     function log(msg, level) {
       const ts = new Date().toLocaleTimeString("zh-CN", {hour12: false});
