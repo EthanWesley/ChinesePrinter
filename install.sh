@@ -40,6 +40,29 @@ if [ "$IS_UPDATE" -eq 1 ] && [ -f "$ENV_FILE" ]; then
     done < "$ENV_FILE" 2>/dev/null || true
 fi
 
+# ---- 校验从 env 读取的配置合法性 ----
+# 防止 env 文件被破坏（如旧版 bug 写入 APP_PORT=--retain-config）导致服务无法启动
+# 端口必须是 1-65535 的纯数字，HID 路径必须形如 /dev/hidgN
+_valid_port() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        *) [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ] 2>/dev/null ;;
+    esac
+}
+_valid_hid() {
+    case "$1" in
+        /dev/hidg[0-9]) return 0 ;;
+        /dev/hidg[0-9][0-9]) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+if [ -n "$EXISTING_PORT" ] && ! _valid_port "$EXISTING_PORT"; then
+    EXISTING_PORT=""
+fi
+if [ -n "$EXISTING_HID" ] && ! _valid_hid "$EXISTING_HID"; then
+    EXISTING_HID=""
+fi
+
 # ---- 参数解析 ----
 # 支持 --retain-config 标志（更新模式下保留现有配置，不覆盖端口/HID）
 # 也支持位置参数: sh install.sh [端口号] [HID设备路径]
@@ -70,6 +93,32 @@ fi
 
 # ---- 脚本所在目录（源文件目录）----
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# ---- 自动下载源文件（支持 curl | sh 一键安装/更新）----
+# 如果当前目录没有 server.sh，说明是通过管道运行的，自动从 GitHub 下载
+if [ ! -f "$SCRIPT_DIR/server.sh" ]; then
+    _REPO_URL="https://github.com/EthanWesley/ChinesePrinter/archive/refs/heads/main.tar.gz"
+    _TMP_DIR=$(mktemp -d 2>/dev/null || mkdir -p /tmp/cp-install-$$ && echo /tmp/cp-install-$$)
+    printf "[INFO]  当前目录无源文件，从 GitHub 下载: %s\n" "$_REPO_URL"
+    if command -v curl >/dev/null 2>&1; then
+        curl -sSL "$_REPO_URL" -o "$_TMP_DIR/src.tar.gz" || { printf "[ERROR] 下载失败\n"; exit 1; }
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "$_TMP_DIR/src.tar.gz" "$_REPO_URL" || { printf "[ERROR] 下载失败\n"; exit 1; }
+    else
+        printf "[ERROR] 需要 curl 或 wget 来下载源文件\n"; exit 1
+    fi
+    # BusyBox tar 不支持 -z，用 gzip 管道
+    if ! gzip -d -c "$_TMP_DIR/src.tar.gz" | tar -xf - -C "$_TMP_DIR" 2>/dev/null; then
+        printf "[ERROR] 解压失败\n"; rm -rf "$_TMP_DIR"; exit 1
+    fi
+    rm -f "$_TMP_DIR/src.tar.gz"
+    # 重新执行解压目录中的 install.sh，传递相同参数
+    if [ -f "$_TMP_DIR/ChinesePrinter-main/install.sh" ]; then
+        exec sh "$_TMP_DIR/ChinesePrinter-main/install.sh" "$@"
+    else
+        printf "[ERROR] 解压后未找到 install.sh\n"; rm -rf "$_TMP_DIR"; exit 1
+    fi
+fi
 
 # ---- 颜色 ----
 if [ -t 1 ]; then
@@ -294,15 +343,22 @@ if [ "$IS_UPDATE" -eq 1 ] && [ -f "$ENV_FILE" ]; then
     CUR_PORT=$(grep -m1 '^APP_PORT=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "")
     CUR_HID=$(grep -m1 '^HID_DEVICE=' "$ENV_FILE" 2>/dev/null | cut -d= -f2 || echo "")
 
-    if [ -n "$1" ] && [ "$CUR_PORT" != "$APP_PORT" ]; then
-        sed -i "s/^APP_PORT=.*/APP_PORT=$APP_PORT/" "$ENV_FILE" 2>/dev/null || \
-            { cp "$ENV_FILE" "${ENV_FILE}.tmp"; sed "s/^APP_PORT=.*/APP_PORT=$APP_PORT/" "${ENV_FILE}.tmp" > "$ENV_FILE"; rm -f "${ENV_FILE}.tmp"; }
+    # 比较 env 现值与校验后的目标值，不同则修复（含 env 被破坏被回退到默认值的情况）
+    _env_fix() {
+        _key="$1"; _val="$2"
+        # BusyBox sed -i 可能不支持，提供 fallback
+        sed -i "s/^${_key}=.*/${_key}=${_val}/" "$ENV_FILE" 2>/dev/null || \
+            { cp "$ENV_FILE" "${ENV_FILE}.tmp"; sed "s/^${_key}=.*/${_key}=${_val}/" "${ENV_FILE}.tmp" > "$ENV_FILE"; rm -f "${ENV_FILE}.tmp"; }
+    }
+    if [ "$CUR_PORT" != "$APP_PORT" ]; then
+        _env_fix "APP_PORT" "$APP_PORT"
         NEED_UPDATE_ENV=1
+        warn "修复 env 中的 APP_PORT: '$CUR_PORT' -> '$APP_PORT'"
     fi
-    if [ -n "$2" ] && [ "$CUR_HID" != "$HID_DEVICE" ]; then
-        sed -i "s/^HID_DEVICE=.*/HID_DEVICE=$HID_DEVICE/" "$ENV_FILE" 2>/dev/null || \
-            { cp "$ENV_FILE" "${ENV_FILE}.tmp"; sed "s/^HID_DEVICE=.*/HID_DEVICE=$HID_DEVICE/" "${ENV_FILE}.tmp" > "$ENV_FILE"; rm -f "${ENV_FILE}.tmp"; }
+    if [ "$CUR_HID" != "$HID_DEVICE" ]; then
+        _env_fix "HID_DEVICE" "$HID_DEVICE"
         NEED_UPDATE_ENV=1
+        warn "修复 env 中的 HID_DEVICE: '$CUR_HID' -> '$HID_DEVICE'"
     fi
 
     if [ "$NEED_UPDATE_ENV" -eq 1 ]; then
@@ -497,21 +553,38 @@ info "步骤 5/5: 验证服务"
 
 sleep 2
 
-# 获取 IP 地址
+# 获取 IP 地址（兼容 BusyBox，不使用 grep -P）
 IP=""
 if command -v ip >/dev/null 2>&1; then
-    IP=$(ip -4 addr show 2>/dev/null | grep -oP 'inet \K[\d.]+' | grep -v '127.0.0.1' | head -1)
-elif command -v ifconfig >/dev/null 2>&1; then
-    IP=$(ifconfig 2>/dev/null | grep -oP 'inet addr:\K[\d.]+' | grep -v '127.0.0.1' | head -1)
-    [ -z "$IP" ] && IP=$(ifconfig 2>/dev/null | grep -oP 'inet \K[\d.]+' | grep -v '127.0.0.1' | head -1)
+    IP=$(ip -4 addr show 2>/dev/null | awk '/inet /{print $2}' | awk -F/ '{print $1}' | grep -v '127.0.0.1' | head -1)
+fi
+if [ -z "$IP" ] && command -v ifconfig >/dev/null 2>&1; then
+    # 兼容两种 ifconfig 输出: "inet addr:1.2.3.4" 和 "inet 1.2.3.4"
+    IP=$(ifconfig 2>/dev/null | awk '/inet /{print $0}' | sed -nE 's/.*inet (addr:)?([0-9.]+).*/\2/p' | grep -v '127.0.0.1' | head -1)
 fi
 [ -z "$IP" ] && IP="<设备IP>"
 
-# 检查端口是否在监听
+# 检查端口是否在监听（兼容 BusyBox netstat 输出格式）
+_LISTENING=0
 if command -v ss >/dev/null 2>&1; then
-    ss -tlnp | grep ":$APP_PORT " >/dev/null 2>&1 && ok "端口 $APP_PORT 正在监听" || warn "端口 $APP_PORT 尚未监听（可能正在启动中）"
+    ss -tlnp 2>/dev/null | grep -E ":$APP_PORT[^0-9]|:$APP_PORT$" >/dev/null 2>&1 && _LISTENING=1
 elif command -v netstat >/dev/null 2>&1; then
-    netstat -tlnp 2>/dev/null | grep ":$APP_PORT " >/dev/null 2>&1 && ok "端口 $APP_PORT 正在监听" || warn "端口 $APP_PORT 尚未监听（可能正在启动中）"
+    netstat -tln 2>/dev/null | grep -E ":$APP_PORT[^0-9]|:$APP_PORT$" >/dev/null 2>&1 && _LISTENING=1
+fi
+if [ "$_LISTENING" -eq 1 ]; then
+    ok "端口 $APP_PORT 正在监听"
+else
+    warn "端口 $APP_PORT 尚未监听（可能正在启动中）"
+fi
+
+# 实际验证服务响应（比端口监听更可靠）
+if command -v curl >/dev/null 2>&1; then
+    _health=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$APP_PORT/api/health" 2>/dev/null)
+    if [ "$_health" = "200" ]; then
+        ok "服务响应正常 (/api/health → 200)"
+    else
+        warn "服务尚未响应 (HTTP $_health)，如持续异常请检查日志: tail -f /tmp/chinese-printer.log"
+    fi
 fi
 
 echo ""
