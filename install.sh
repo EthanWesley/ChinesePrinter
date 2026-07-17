@@ -97,15 +97,30 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # ---- 自动下载源文件（支持 curl | sh 一键安装/更新）----
 # 如果当前目录没有 server.sh，说明是通过管道运行的，自动从 GitHub 下载
 if [ ! -f "$SCRIPT_DIR/server.sh" ]; then
-    _REPO_URL="https://github.com/EthanWesley/ChinesePrinter/archive/refs/heads/main.tar.gz"
     _TMP_DIR=$(mktemp -d 2>/dev/null || mkdir -p /tmp/cp-install-$$ && echo /tmp/cp-install-$$)
-    printf "[INFO]  当前目录无源文件，从 GitHub 下载: %s\n" "$_REPO_URL"
-    if command -v curl >/dev/null 2>&1; then
-        curl -sSL "$_REPO_URL" -o "$_TMP_DIR/src.tar.gz" || { printf "[ERROR] 下载失败\n"; exit 1; }
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$_TMP_DIR/src.tar.gz" "$_REPO_URL" || { printf "[ERROR] 下载失败\n"; exit 1; }
-    else
-        printf "[ERROR] 需要 curl 或 wget 来下载源文件\n"; exit 1
+    # 多源回退：codeload(官方) -> gh-proxy(国内代理) -> github archive
+    _MIRRORS="
+https://codeload.github.com/EthanWesley/ChinesePrinter/tar.gz/refs/heads/main
+https://gh-proxy.com/https://github.com/EthanWesley/ChinesePrinter/archive/refs/heads/main.tar.gz
+https://github.com/EthanWesley/ChinesePrinter/archive/refs/heads/main.tar.gz
+"
+    _DL_OK=0
+    printf "[INFO]  当前目录无源文件，从 GitHub 下载...\n"
+    for _url in $_MIRRORS; do
+        printf "[INFO]  尝试: %s\n" "$_url"
+        if command -v curl >/dev/null 2>&1; then
+            curl -sSL --max-time 30 "$_url" -o "$_TMP_DIR/src.tar.gz" 2>/dev/null && [ -s "$_TMP_DIR/src.tar.gz" ] && _DL_OK=1
+        elif command -v wget >/dev/null 2>&1; then
+            wget -qO "$_TMP_DIR/src.tar.gz" --timeout=30 "$_url" 2>/dev/null && [ -s "$_TMP_DIR/src.tar.gz" ] && _DL_OK=1
+        else
+            printf "[ERROR] 需要 curl 或 wget 来下载源文件\n"; exit 1
+        fi
+        [ "$_DL_OK" -eq 1 ] && break
+    done
+    if [ "$_DL_OK" -eq 0 ]; then
+        printf "[ERROR] 所有下载源均失败，请检查网络连接\n"
+        printf "[ERROR] 或手动下载: git clone https://github.com/EthanWesley/ChinesePrinter.git\n"
+        rm -rf "$_TMP_DIR"; exit 1
     fi
     # BusyBox tar 不支持 -z，用 gzip 管道
     if ! gzip -d -c "$_TMP_DIR/src.tar.gz" | tar -xf - -C "$_TMP_DIR" 2>/dev/null; then
