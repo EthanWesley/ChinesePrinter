@@ -24,12 +24,22 @@ HID_DEVICE="${HID_DEVICE:-/dev/hidg0}"
 KEY_DELAY="${KEY_DELAY:-0}"
 ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0}"
 CHAR_DELAY="${CHAR_DELAY:-0}"
+# 打字引擎模式: auto(自动检测C) | native(强制C) | shell(强制Shell)
+TYPE_MODE="${TYPE_MODE:-auto}"
+# C 引擎每报告延时（毫秒），匹配 USB bInterval，0 可能导致 Alt 卡住
+REPORT_DELAY="${REPORT_DELAY:-5}"
 STATE_DIR="${STATE_DIR:-/tmp/chinese-printer}"
 SETTINGS_FILE="$STATE_DIR/settings.env"
 DEVICE_FILE="$STATE_DIR/current_device"
 STOP_FLAG="$STATE_DIR/stop_flag"
 STATUS_FILE="$STATE_DIR/status.json"
 LOG_FILE="${LOG_FILE:-/tmp/chinese-printer.log}"
+
+# 检测 C 原生加速器是否可用
+native_available() {
+    [ -x "$INSTALL_DIR/hid_writer" ] || return 1
+    "$INSTALL_DIR/hid_writer" --help >/dev/null 2>&1
+}
 
 # ---- 状态目录 ----
 mkdir -p "$STATE_DIR"
@@ -65,12 +75,18 @@ init_settings() {
         cat > "$SETTINGS_FILE" <<EOF
 KEY_DELAY=$KEY_DELAY
 ALT_RELEASE_DELAY=$ALT_RELEASE_DELAY
+CHAR_DELAY=$CHAR_DELAY
+TYPE_MODE=$TYPE_MODE
+REPORT_DELAY=$REPORT_DELAY
 EOF
     fi
     # 加载配置
     . "$SETTINGS_FILE"
-    KEY_DELAY="${KEY_DELAY:-0.05}"
-    ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0.08}"
+    KEY_DELAY="${KEY_DELAY:-0}"
+    ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0}"
+    CHAR_DELAY="${CHAR_DELAY:-0}"
+    TYPE_MODE="${TYPE_MODE:-auto}"
+    REPORT_DELAY="${REPORT_DELAY:-5}"
 }
 
 # ---- 更新状态文件 ----
@@ -258,12 +274,16 @@ api_health() {
     _cur_key_delay="${KEY_DELAY:-0}"
     _cur_alt_delay="${ALT_RELEASE_DELAY:-0}"
     _cur_char_delay="${CHAR_DELAY:-0}"
+    _cur_mode="${TYPE_MODE:-auto}"
+    _cur_report_delay="${REPORT_DELAY:-5}"
+    _native_ok="false"
+    native_available && _native_ok="true"
 
     # 列出所有设备
     _all_devices=$(list_hid_devices)
 
     cat <<EOF
-{"ok":true,"busy":${_busy:-false},"progress":${_progress:-0},"total":${_total:-0},"encoding":"${_encoding:-}","last_error":"${_last_error:-}","device":"$_cur_device","device_exists":$_device_exists,"device_type":"$_device_type","all_devices":$_all_devices,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"char_delay":$_cur_char_delay,"port":$PORT}
+{"ok":true,"busy":${_busy:-false},"progress":${_progress:-0},"total":${_total:-0},"encoding":"${_encoding:-}","last_error":"${_last_error:-}","device":"$_cur_device","device_exists":$_device_exists,"device_type":"$_device_type","all_devices":$_all_devices,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"char_delay":$_cur_char_delay,"type_mode":"$_cur_mode","report_delay":$_cur_report_delay,"native_available":$_native_ok,"port":$PORT}
 EOF
 }
 
@@ -307,8 +327,12 @@ api_settings_get() {
     _cur_key_delay="${KEY_DELAY:-0}"
     _cur_alt_delay="${ALT_RELEASE_DELAY:-0}"
     _cur_char_delay="${CHAR_DELAY:-0}"
+    _cur_mode="${TYPE_MODE:-auto}"
+    _cur_report_delay="${REPORT_DELAY:-5}"
+    _native_ok="false"
+    native_available && _native_ok="true"
     cat <<EOF
-{"ok":true,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"char_delay":$_cur_char_delay,"key_delay_min":0,"key_delay_max":0.1,"alt_delay_min":0,"alt_delay_max":0.1,"char_delay_min":0,"char_delay_max":0.1}
+{"ok":true,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"char_delay":$_cur_char_delay,"type_mode":"$_cur_mode","report_delay":$_cur_report_delay,"native_available":$_native_ok,"key_delay_min":0,"key_delay_max":0.1,"alt_delay_min":0,"alt_delay_max":0.1,"char_delay_min":0,"char_delay_max":0.1,"report_delay_min":0,"report_delay_max":50}
 EOF
 }
 
@@ -366,6 +390,34 @@ api_settings_post() {
         fi
     fi
 
+    _new_mode=$(json_get "$_body" "type_mode")
+    if [ -n "$_new_mode" ]; then
+        case "$_new_mode" in
+            auto|native|shell)
+                TYPE_MODE="$_new_mode"
+                _updated=1
+                ;;
+            *)
+                _errors="${_errors}type_mode 必须是 auto/native/shell; "
+                ;;
+        esac
+    fi
+
+    _new_report_delay=$(json_get "$_body" "report_delay")
+    if [ -n "$_new_report_delay" ]; then
+        if printf '%s' "$_new_report_delay" | grep -qE '^[0-9]+\.?[0-9]*$'; then
+            _in_range=$(awk -v v="$_new_report_delay" 'BEGIN{ if(v>=0 && v<=50) print 1; else print 0 }')
+            if [ "$_in_range" = "1" ]; then
+                REPORT_DELAY="$_new_report_delay"
+                _updated=1
+            else
+                _errors="${_errors}report_delay 超出范围 [0,50] ms; "
+            fi
+        else
+            _errors="${_errors}report_delay 不是合法数字; "
+        fi
+    fi
+
     if [ -n "$_errors" ]; then
         printf '{"ok":false,"msg":"%s"}' "$_errors"
         return
@@ -381,9 +433,11 @@ api_settings_post() {
 KEY_DELAY=$KEY_DELAY
 ALT_RELEASE_DELAY=$ALT_RELEASE_DELAY
 CHAR_DELAY=$CHAR_DELAY
+TYPE_MODE=$TYPE_MODE
+REPORT_DELAY=$REPORT_DELAY
 EOF
-    log "延时设置已更新: key_delay=$KEY_DELAY, alt_release_delay=$ALT_RELEASE_DELAY, char_delay=$CHAR_DELAY"
-    printf '{"ok":true,"msg":"设置已更新","key_delay":%s,"alt_release_delay":%s,"char_delay":%s}' "$KEY_DELAY" "$ALT_RELEASE_DELAY" "$CHAR_DELAY"
+    log "设置已更新: key_delay=$KEY_DELAY, alt_release_delay=$ALT_RELEASE_DELAY, char_delay=$CHAR_DELAY, type_mode=$TYPE_MODE, report_delay=$REPORT_DELAY"
+    printf '{"ok":true,"msg":"设置已更新","key_delay":%s,"alt_release_delay":%s,"char_delay":%s,"type_mode":"%s","report_delay":%s}' "$KEY_DELAY" "$ALT_RELEASE_DELAY" "$CHAR_DELAY" "$TYPE_MODE" "$REPORT_DELAY"
 }
 
 # ---- API: /api/stop (POST) ----
@@ -454,38 +508,65 @@ api_type() {
 
     # 启动后台打字任务
     rm -f "$STOP_FLAG"
+
+    # 解析客户端请求的引擎模式（覆盖默认）
+    _req_mode=$(json_get "$_body" "mode")
+    _req_report_delay=$(json_get "$_body" "report_delay")
+
     (
         # 重新加载最新延时设置
         . "$SETTINGS_FILE" 2>/dev/null
         KEY_DELAY="${KEY_DELAY:-0}"
         ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0}"
         CHAR_DELAY="${CHAR_DELAY:-0}"
+        TYPE_MODE="${TYPE_MODE:-auto}"
+        REPORT_DELAY="${REPORT_DELAY:-5}"
+
+        # 请求参数覆盖（前端实时切换）
+        [ -n "$_req_mode" ] && TYPE_MODE="$_req_mode"
+        [ -n "$_req_report_delay" ] && REPORT_DELAY="$_req_report_delay"
+
+        # 验证 report_delay 范围（0-50ms）
+        _in_range=$(awk -v v="$REPORT_DELAY" 'BEGIN{ if(v>=0 && v<=50) print 1; else print 0 }')
+        [ "$_in_range" != "1" ] && REPORT_DELAY=5
 
         # CHAR_DELAY 秒转毫秒（C 程序用毫秒）
         _char_delay_ms=$(awk -v s="$CHAR_DELAY" 'BEGIN{ v=s*1000; if(v<0)v=0; printf "%.0f", v }')
 
-        # 检测 C 原生加速器
+        # 决定使用哪种引擎
         _use_native=0
-        if [ -x "$INSTALL_DIR/hid_writer" ]; then
-            _use_native=1
-        fi
+        case "$TYPE_MODE" in
+            native)
+                if native_available; then
+                    _use_native=1
+                else
+                    log "模式=native 但 C 加速器不可用，回退 Shell"
+                fi
+                ;;
+            shell)
+                _use_native=0
+                ;;
+            auto|"")
+                if native_available; then
+                    _use_native=1
+                fi
+                ;;
+        esac
 
         update_status true 0 "$_total" "$_encoding" ""
 
         if [ "$_use_native" = "1" ]; then
-            # ===== C 原生加速路径（快 50-100 倍）=====
-            log "开始打字(C加速): 编码=$_encoding, 共 $_total 项, char_delay=${_char_delay_ms}ms"
+            # ===== C 原生加速路径 =====
+            log "开始打字(C加速): 编码=$_encoding, 共 $_total 项, report_delay=${REPORT_DELAY}ms, char_delay=${_char_delay_ms}ms"
 
-            # 后台启动 C 程序
-            # --report-delay 10: 每个 HID 报告间 10ms（匹配 USB bInterval，防 Alt 卡住）
             cat "$_items_file" | "$INSTALL_DIR/hid_writer" \
                 --device "$_cur_device" \
-                --report-delay 10 \
+                --report-delay "$REPORT_DELAY" \
                 --char-delay "$_char_delay_ms" \
                 --verbose >> "$LOG_FILE" 2>&1 &
             _writer_pid=$!
 
-            # 监控停止标志（C 程序不检查 STOP_FLAG，需外部 kill）
+            # 监控停止标志
             while kill -0 "$_writer_pid" 2>/dev/null; do
                 if [ -f "$STOP_FLAG" ]; then
                     kill "$_writer_pid" 2>/dev/null
@@ -493,7 +574,6 @@ api_type() {
                     log "用户中止打字（C 程序已终止）"
                     break
                 fi
-                # 短暂等待（C 程序很快，100ms 轮询足够）
                 sleep 0.1 2>/dev/null || sleep 1
             done
             wait "$_writer_pid" 2>/dev/null
@@ -501,11 +581,9 @@ api_type() {
             _progress=$_total
             update_status true "$_progress" "$_total" "$_encoding" ""
         else
-            # ===== Shell 回退路径 =====
-            # 加载 HID 控制
+            # ===== Shell 路径 =====
             . "$INSTALL_DIR/hid_keyboard.sh"
 
-            # 初始化 HID（使用运行时选择的设备）
             if ! hid_init "$_cur_device" 2>/dev/null; then
                 update_status false 0 "$_total" "$_encoding" "HID 初始化失败"
                 exit 1
@@ -515,7 +593,6 @@ api_type() {
 
             _progress=0
             while IFS=' ' read -r _type _value; do
-                # 检查停止标志
                 if [ -f "$STOP_FLAG" ]; then
                     log "用户中止打字（已完成 $_progress/$_total）"
                     break

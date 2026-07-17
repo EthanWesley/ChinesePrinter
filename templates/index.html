@@ -307,6 +307,32 @@
           </div>
         </div>
       </div>
+
+      <!-- 引擎模式设置（C 原生 vs Shell） -->
+      <div class="engine-settings" style="margin-top:16px;padding:12px;background:var(--card-2);border:1px solid var(--border);border-radius:8px;">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+          <label class="field-label" for="engineModeSelect">打字引擎:</label>
+          <select id="engineModeSelect" style="min-width:180px;">
+            <option value="auto">自动（推荐）</option>
+            <option value="native">C 原生（最快）</option>
+            <option value="shell">Shell（兼容）</option>
+          </select>
+          <span class="tip" id="engineStatus">检测中...</span>
+        </div>
+        <div class="setting-item" id="reportDelayItem">
+          <div class="setting-head">
+            <label class="field-label">C 引擎报告延时（每 HID 报告间隔）</label>
+            <span class="setting-value" id="reportDelayValue">5 ms</span>
+          </div>
+          <input type="range" id="reportDelaySlider" min="0" max="50" step="1" value="5">
+          <div class="setting-desc">
+            范围: <code>0 ~ 50 ms</code> ·
+            <strong>仅 C 原生模式生效</strong>。匹配 USB bInterval，过小会导致 Alt 键卡住或丢字。
+            <br>实测参考: 0ms≈88字/秒(易卡键) · 2ms≈39字/秒 · 3ms≈27字/秒 · 8ms≈10字/秒(稳定) · 10ms≈10字/秒(最稳)
+          </div>
+        </div>
+      </div>
+
       <div class="controls">
         <button id="saveSettingsBtn" class="secondary">保存延时设置</button>
         <button id="resetSettingsBtn" class="secondary">恢复默认</button>
@@ -539,6 +565,21 @@
       if (r.char_delay !== undefined && !_settingsDirty) {
         $("infoCharDelay").textContent = secToMs(r.char_delay) + " ms";
       }
+      // 引擎状态（仅在未编辑时同步）
+      if (r.native_available !== undefined) {
+        _nativeAvailable = !!r.native_available;
+      }
+      if (!_settingsDirty) {
+        if (r.type_mode !== undefined) {
+          _currentTypeMode = r.type_mode;
+          $("engineModeSelect").value = r.type_mode;
+        }
+        if (r.report_delay !== undefined) {
+          $("reportDelaySlider").value = Math.min(50, Math.max(0, parseInt(r.report_delay, 10) || 0));
+        }
+        updateDelayDisplay();
+        updateEngineStatus();
+      }
 
       // 更新设备选择下拉框
       updateDeviceSelector(r.all_devices, r.device);
@@ -631,8 +672,11 @@
         toast("没有可打字的内容", "err");
         return;
       }
-      log(`开始打字: 编码=${encoding}, 共 ${items.length} 项`);
-      const r = await api("/api/type", "POST", {encoding, items});
+      // 实时读取当前引擎模式和报告延时（无需保存即生效）
+      const mode = $("engineModeSelect").value;
+      const report_delay = parseInt($("reportDelaySlider").value, 10);
+      log(`开始打字: 编码=${encoding}, 共 ${items.length} 项, 引擎=${mode}, 报告延时=${report_delay}ms`);
+      const r = await api("/api/type", "POST", {encoding, items, mode, report_delay});
       if (r.ok) {
         toast("开始打字", "ok");
         $("typeBtn").disabled = true;
@@ -656,14 +700,18 @@
     const DEFAULT_KEY_DELAY_MS = 0;
     const DEFAULT_ALT_DELAY_MS = 0;
     const DEFAULT_CHAR_DELAY_MS = 0;
+    const DEFAULT_REPORT_DELAY_MS = 5;
+    const DEFAULT_TYPE_MODE = "auto";
     let _settingsDirty = false;
+    let _nativeAvailable = false;
+    let _currentTypeMode = DEFAULT_TYPE_MODE;
 
     // 秒（后端单位）转毫秒（滑块单位）
     function secToMs(sec) { return Math.round(sec * 1000); }
     // 毫秒（滑块单位）转秒（后端单位）
     function msToSec(ms) { return parseInt(ms, 10) / 1000; }
 
-    function initDelaySliders(keyDelaySec, altDelaySec, charDelaySec) {
+    function initDelaySliders(keyDelaySec, altDelaySec, charDelaySec, mode, reportDelayMs) {
       // 从后端秒值转换，并限制在 0-100ms 范围
       let kMs = secToMs(keyDelaySec);
       let aMs = secToMs(altDelaySec);
@@ -674,7 +722,17 @@
       $("keyDelaySlider").value = kMs;
       $("altDelaySlider").value = aMs;
       $("charDelaySlider").value = cMs;
+      // 引擎模式和报告延时
+      if (mode !== undefined && mode !== null) {
+        _currentTypeMode = mode;
+        $("engineModeSelect").value = mode;
+      }
+      if (reportDelayMs !== undefined && reportDelayMs !== null) {
+        const rMs = Math.min(50, Math.max(0, parseInt(reportDelayMs, 10) || 0));
+        $("reportDelaySlider").value = rMs;
+      }
       updateDelayDisplay();
+      updateEngineStatus();
       _settingsDirty = false;
       updateSettingsStatus();
     }
@@ -686,10 +744,41 @@
       $("keyDelayValue").textContent = kMs + " ms";
       $("altDelayValue").textContent = aMs + " ms";
       $("charDelayValue").textContent = cMs + " ms";
+      $("reportDelayValue").textContent = parseInt($("reportDelaySlider").value, 10) + " ms";
       // 设备信息卡片同步显示毫秒
       $("infoDelay").textContent = kMs + " ms";
       $("infoAltDelay").textContent = aMs + " ms";
       $("infoCharDelay").textContent = cMs + " ms";
+    }
+
+    function updateEngineStatus() {
+      const mode = $("engineModeSelect").value;
+      _currentTypeMode = mode;
+      const status = $("engineStatus");
+      const reportItem = $("reportDelayItem");
+      let msg = "";
+      let color = "var(--muted)";
+      if (!_nativeAvailable) {
+        msg = "C 原生加速器不可用，将使用 Shell";
+        color = "var(--orange)";
+        reportItem.style.opacity = "0.5";
+        reportItem.style.pointerEvents = "none";
+      } else {
+        reportItem.style.opacity = "1";
+        reportItem.style.pointerEvents = "auto";
+        if (mode === "native") {
+          msg = "已启用 C 原生加速";
+          color = "var(--green)";
+        } else if (mode === "shell") {
+          msg = "已强制使用 Shell（较慢）";
+          color = "var(--orange)";
+        } else {
+          msg = "自动模式 · C 原生可用";
+          color = "var(--green)";
+        }
+      }
+      status.textContent = msg;
+      status.style.color = color;
     }
 
     function updateSettingsStatus() {
@@ -721,25 +810,40 @@
       _settingsDirty = true;
       updateSettingsStatus();
     });
+    $("reportDelaySlider").addEventListener("input", () => {
+      updateDelayDisplay();
+      _settingsDirty = true;
+      updateSettingsStatus();
+    });
+    $("engineModeSelect").addEventListener("change", () => {
+      updateEngineStatus();
+      _settingsDirty = true;
+      updateSettingsStatus();
+    });
 
     $("saveSettingsBtn").addEventListener("click", async () => {
       const kMs = parseInt($("keyDelaySlider").value, 10);
       const aMs = parseInt($("altDelaySlider").value, 10);
       const cMs = parseInt($("charDelaySlider").value, 10);
+      const rMs = parseInt($("reportDelaySlider").value, 10);
+      const mode = $("engineModeSelect").value;
       // 提交时转换为秒（后端 sleep 接受小数秒）
       const keyDelaySec = msToSec(kMs);
       const altDelaySec = msToSec(aMs);
       const charDelaySec = msToSec(cMs);
-      log(`保存延时设置: 按键间隔=${kMs}ms, Alt释放=${aMs}ms, 字符间隔=${cMs}ms`);
+      log(`保存设置: 按键=${kMs}ms, Alt=${aMs}ms, 字符=${cMs}ms, 引擎=${mode}, 报告延时=${rMs}ms`);
       const r = await api("/api/settings", "POST", {
         key_delay: keyDelaySec,
         alt_release_delay: altDelaySec,
         char_delay: charDelaySec,
+        type_mode: mode,
+        report_delay: rMs,
       });
       if (r.ok) {
         _settingsDirty = false;
+        _currentTypeMode = mode;
         updateSettingsStatus();
-        log("延时设置已保存", "ok");
+        log("设置已保存", "ok");
         toast("设置已保存", "ok");
       } else {
         log("保存失败: " + r.msg, "err");
@@ -751,7 +855,10 @@
       $("keyDelaySlider").value = DEFAULT_KEY_DELAY_MS;
       $("altDelaySlider").value = DEFAULT_ALT_DELAY_MS;
       $("charDelaySlider").value = DEFAULT_CHAR_DELAY_MS;
+      $("reportDelaySlider").value = DEFAULT_REPORT_DELAY_MS;
+      $("engineModeSelect").value = DEFAULT_TYPE_MODE;
       updateDelayDisplay();
+      updateEngineStatus();
       _settingsDirty = true;
       updateSettingsStatus();
       log("已恢复默认值（未保存）");
@@ -833,7 +940,9 @@
         initDelaySliders(
           r.key_delay !== undefined ? r.key_delay : msToSec(DEFAULT_KEY_DELAY_MS),
           r.alt_release_delay !== undefined ? r.alt_release_delay : msToSec(DEFAULT_ALT_DELAY_MS),
-          r.char_delay !== undefined ? r.char_delay : msToSec(DEFAULT_CHAR_DELAY_MS)
+          r.char_delay !== undefined ? r.char_delay : msToSec(DEFAULT_CHAR_DELAY_MS),
+          r.type_mode !== undefined ? r.type_mode : DEFAULT_TYPE_MODE,
+          r.report_delay !== undefined ? r.report_delay : DEFAULT_REPORT_DELAY_MS
         );
       }
       // 定时刷新状态
