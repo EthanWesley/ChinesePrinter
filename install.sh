@@ -40,9 +40,33 @@ if [ "$IS_UPDATE" -eq 1 ] && [ -f "$ENV_FILE" ]; then
     done < "$ENV_FILE" 2>/dev/null || true
 fi
 
+# ---- 参数解析 ----
+# 支持 --retain-config 标志（更新模式下保留现有配置，不覆盖端口/HID）
+# 也支持位置参数: sh install.sh [端口号] [HID设备路径]
+_RETAIN_CONFIG=0
+_ARG_PORT=""
+_ARG_HID=""
+for _a in "$@"; do
+    case "$_a" in
+        --retain-config) _RETAIN_CONFIG=1 ;;
+        --*) : ;;  # 忽略未知长选项
+        *)
+            if [ -z "$_ARG_PORT" ]; then _ARG_PORT="$_a"
+            elif [ -z "$_ARG_HID" ]; then _ARG_HID="$_a"
+            fi
+            ;;
+    esac
+done
+
 # ---- 参数优先级：命令行 > 环境变量 > 现有配置 > 默认值 ----
-APP_PORT="${1:-${APP_PORT:-${EXISTING_PORT:-8848}}}"
-HID_DEVICE="${2:-${HID_DEVICE:-${EXISTING_HID:-/dev/hidg0}}}"
+# --retain-config 模式下，跳过命令行参数，使用现有配置
+if [ "$_RETAIN_CONFIG" -eq 1 ] && [ "$IS_UPDATE" -eq 1 ]; then
+    APP_PORT="${EXISTING_PORT:-8848}"
+    HID_DEVICE="${EXISTING_HID:-/dev/hidg0}"
+else
+    APP_PORT="${_ARG_PORT:-${APP_PORT:-${EXISTING_PORT:-8848}}}"
+    HID_DEVICE="${_ARG_HID:-${HID_DEVICE:-${EXISTING_HID:-/dev/hidg0}}}"
+fi
 
 # ---- 脚本所在目录（源文件目录）----
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
