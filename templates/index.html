@@ -272,6 +272,7 @@
           <select id="encodingSelect">
             <option value="gbk">GBK (中文 Windows)</option>
             <option value="unicode">Unicode (通用)</option>
+            <option value="mdwin">医智赢输入法专用 (Unicode 变体)</option>
             <option value="ascii">ASCII (英文数字)</option>
             <option value="base64">Base64 (内网解码)</option>
           </select>
@@ -504,6 +505,30 @@
     function textToAltSequence(text, encoding) {
       const items = [];
 
+      // 医智赢：与微信前端 stringToMdwinUnicodeBytes 保持相同的 UTF-16/XOR 规则。
+      // 参考协议的 18/19 标记表示按下/松开 Alt，本项目由 HID 引擎完成。
+      if (encoding === "mdwin") {
+        const mdwinXorKey = 996;
+        for (let i = 0; i < text.length; i++) {
+          const charCode = text.charCodeAt(i);
+          if ((charCode >= 32 && charCode <= 126) || charCode >= 128) {
+            // 空格也必须加密；补充平面字符按两个 UTF-16 单元处理，与参考实现一致。
+            items.push({code: charCode ^ mdwinXorKey});
+          } else if (charCode === 10) {
+            items.push({control: "enter"});
+          } else if (charCode === 9) {
+            items.push({control: "tab"});
+          } else if (charCode === 8) {
+            items.push({control: "backspace"});
+          } else if (charCode === 27) {
+            items.push({control: "esc"});
+          }
+          // 与现有文本模式一致，忽略 CR，避免 CRLF 产生两次换行。
+          // 其余非打印 ASCII 没有对应的文本输入键，不生成 Alt 码。
+        }
+        return items;
+      }
+
       // Base64 模式：先把整个文本编码为 base64，再用 ASCII 码方式逐字符输入
       // 适用于内网有解码软件的场景
       if (encoding === "base64") {
@@ -717,6 +742,7 @@
     const ENCODING_HINTS = {
       gbk: "<strong>GBK</strong> 是国内软件编码，大部分病历系统、记事本、WPS Word 都可使用。",
       unicode: "<strong>Unicode</strong> 是国际编码，部分国外软件如微软 Microsoft Word 使用。",
+      mdwin: "<strong>医智赢编码</strong> 是 Unicode 的加密变体。目标电脑需安装并启用医智赢输入法；中文、英文、标点和空格均使用该编码输入。",
       ascii: "<strong>ASCII</strong> 仅支持英文和数字，中文及标点符号会被跳过。",
       base64: "<strong>Base64</strong> 把所有中英文先编码为 Base64，再用 ASCII 码方式输入；需要内网有解码软件支持。"
     };
