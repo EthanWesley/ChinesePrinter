@@ -32,6 +32,8 @@ STATE_DIR="${STATE_DIR:-/tmp/chinese-printer}"
 SETTINGS_FILE="$STATE_DIR/settings.env"
 DEVICE_FILE="$STATE_DIR/current_device"
 STOP_FLAG="$STATE_DIR/stop_flag"
+PAUSE_FLAG="$STATE_DIR/pause_flag"
+PROGRESS_FILE="$STATE_DIR/native_progress"
 STATUS_FILE="$STATE_DIR/status.json"
 LOG_FILE="${LOG_FILE:-/tmp/chinese-printer.log}"
 
@@ -96,9 +98,10 @@ update_status() {
     _total="${3:-0}"
     _encoding="${4:-}"
     _error="${5:-}"
-    cat > "$STATUS_FILE" <<EOF
+    cat > "$STATUS_FILE.tmp" <<EOF
 {"busy":$_busy,"progress":$_progress,"total":$_total,"encoding":"$_encoding","last_error":"$_error","timestamp":"$(date '+%Y-%m-%dT%H:%M:%S')"}
 EOF
+    mv -f "$STATUS_FILE.tmp" "$STATUS_FILE"
 }
 
 # ---- 加载 HID 键盘控制 ----
@@ -262,11 +265,22 @@ api_health() {
     _encoding=""
     _last_error=""
     if [ -f "$STATUS_FILE" ]; then
-        _busy=$(json_get "$(cat "$STATUS_FILE")" "busy")
-        _progress=$(json_get "$(cat "$STATUS_FILE")" "progress")
-        _total=$(json_get "$(cat "$STATUS_FILE")" "total")
-        _encoding=$(json_get "$(cat "$STATUS_FILE")" "encoding")
-        _last_error=$(json_get "$(cat "$STATUS_FILE")" "last_error")
+        _status=$(cat "$STATUS_FILE")
+        _busy=$(json_get "$_status" "busy")
+        _progress=$(json_get "$_status" "progress")
+        _total=$(json_get "$_status" "total")
+        _encoding=$(json_get "$_status" "encoding")
+        _last_error=$(json_get "$_status" "last_error")
+    fi
+
+    _paused=false
+    if [ "$_busy" = "true" ]; then
+        [ -f "$PAUSE_FLAG" ] && _paused=true
+        _native_progress=$(cat "$PROGRESS_FILE" 2>/dev/null)
+        case "$_native_progress" in
+            ''|*[!0-9]*) : ;;
+            *) _progress="$_native_progress" ;;
+        esac
     fi
 
     # 读取当前延时设置
@@ -283,7 +297,7 @@ api_health() {
     _all_devices=$(list_hid_devices)
 
     cat <<EOF
-{"ok":true,"busy":${_busy:-false},"progress":${_progress:-0},"total":${_total:-0},"encoding":"${_encoding:-}","last_error":"${_last_error:-}","device":"$_cur_device","device_exists":$_device_exists,"device_type":"$_device_type","all_devices":$_all_devices,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"char_delay":$_cur_char_delay,"type_mode":"$_cur_mode","report_delay":$_cur_report_delay,"native_available":$_native_ok,"port":$PORT}
+{"ok":true,"busy":${_busy:-false},"paused":$_paused,"progress":${_progress:-0},"total":${_total:-0},"encoding":"${_encoding:-}","last_error":"${_last_error:-}","device":"$_cur_device","device_exists":$_device_exists,"device_type":"$_device_type","all_devices":$_all_devices,"key_delay":$_cur_key_delay,"alt_release_delay":$_cur_alt_delay,"char_delay":$_cur_char_delay,"type_mode":"$_cur_mode","report_delay":$_cur_report_delay,"native_available":$_native_ok,"port":$PORT}
 EOF
 }
 
@@ -447,6 +461,16 @@ api_stop() {
     printf '{"ok":true,"msg":"已请求停止打字"}'
 }
 
+api_pause() {
+    touch "$PAUSE_FLAG"
+    printf '{"ok":true,"msg":"已请求暂停打字"}'
+}
+
+api_resume() {
+    rm -f "$PAUSE_FLAG"
+    printf '{"ok":true,"msg":"已继续打字"}'
+}
+
 # ---- API: /api/type (POST) ----
 # 请求体: {"encoding":"gbk","items":[{"code":54992},{"control":"enter"},...]}
 api_type() {
@@ -503,7 +527,8 @@ api_type() {
     fi
 
     # 启动后台打字任务
-    rm -f "$STOP_FLAG"
+    rm -f "$STOP_FLAG" "$PAUSE_FLAG"
+    : > "$PROGRESS_FILE"
 
     # 解析客户端请求的引擎模式（覆盖默认）
     _req_mode=$(json_get "$_body" "mode")
@@ -555,27 +580,31 @@ api_type() {
             # ===== C 原生加速路径 =====
             log "开始打字(C加速): 编码=$_encoding, 共 $_total 项, report_delay=${REPORT_DELAY}ms, char_delay=${_char_delay_ms}ms"
 
-            cat "$_items_file" | "$INSTALL_DIR/hid_writer" \
+            "$INSTALL_DIR/hid_writer" \
                 --device "$_cur_device" \
                 --report-delay "$REPORT_DELAY" \
                 --char-delay "$_char_delay_ms" \
-                --verbose >> "$LOG_FILE" 2>&1 &
+                --stop-file "$STOP_FLAG" \
+                --pause-file "$PAUSE_FLAG" \
+                --progress-file "$PROGRESS_FILE" \
+                --verbose < "$_items_file" >> "$LOG_FILE" 2>&1 &
             _writer_pid=$!
 
-            # 监控停止标志
+            # C 程序在字符边界响应停止/暂停，不在 Alt 码中途杀进程。
             while kill -0 "$_writer_pid" 2>/dev/null; do
-                if [ -f "$STOP_FLAG" ]; then
-                    kill "$_writer_pid" 2>/dev/null
-                    wait "$_writer_pid" 2>/dev/null
-                    log "用户中止打字（C 程序已终止）"
-                    break
-                fi
-                sleep 0.1 2>/dev/null || sleep 1
+                sleep 0.05 2>/dev/null || sleep 1
             done
             wait "$_writer_pid" 2>/dev/null
+            _native_rc=$?
 
-            _progress=$_total
-            update_status true "$_progress" "$_total" "$_encoding" ""
+            _progress=$(cat "$PROGRESS_FILE" 2>/dev/null)
+            case "$_progress" in
+                ''|*[!0-9]*) _progress=$_total ;;
+            esac
+            if [ "$_native_rc" != "0" ]; then
+                update_status false "$_progress" "$_total" "$_encoding" "HID 写入失败"
+                exit 1
+            fi
         else
             # ===== Shell 路径 =====
             . "$INSTALL_DIR/hid_keyboard.sh"
@@ -589,6 +618,9 @@ api_type() {
 
             _progress=0
             while IFS=' ' read -r _type _value; do
+                while [ -f "$PAUSE_FLAG" ] && [ ! -f "$STOP_FLAG" ]; do
+                    sleep 0.05 2>/dev/null || sleep 1
+                done
                 if [ -f "$STOP_FLAG" ]; then
                     log "用户中止打字（已完成 $_progress/$_total）"
                     break
@@ -608,7 +640,7 @@ api_type() {
             done < "$_items_file"
         fi
 
-        rm -f "$_items_file" "$STOP_FLAG"
+        rm -f "$_items_file" "$STOP_FLAG" "$PAUSE_FLAG"
         update_status false "$_progress" "$_total" "$_encoding" ""
         log "打字完成: $_progress/$_total"
     ) </dev/null >> "$LOG_FILE" 2>&1 &
@@ -703,6 +735,14 @@ handle_request() {
                     ;;
                 /api/stop)
                     _json=$(api_stop)
+                    http_json 200 "$_json"
+                    ;;
+                /api/pause)
+                    _json=$(api_pause)
+                    http_json 200 "$_json"
+                    ;;
+                /api/resume)
+                    _json=$(api_resume)
                     http_json 200 "$_json"
                     ;;
                 /api/settings)

@@ -108,11 +108,31 @@ static int build_control(unsigned char *buf, const char *name, int *out_reports)
     return 16;
 }
 
+/* Only pause/stop between complete characters, after releasing Alt. */
+static int wait_ready(const char *stop_file, const char *pause_file) {
+    for (;;) {
+        if (stop_file && access(stop_file, F_OK) == 0) return 0;
+        if (!pause_file || access(pause_file, F_OK) != 0) return 1;
+        usleep(10000);
+    }
+}
+
+static void save_progress(int fd, int total) {
+    if (fd < 0) return;
+    char value[32];
+    int len = snprintf(value, sizeof(value), "%d\n", total);
+    lseek(fd, 0, SEEK_SET);
+    if (write(fd, value, len) == len && ftruncate(fd, len) < 0) perror("progress truncate");
+}
+
 int main(int argc, char *argv[]) {
     const char *dev = "/dev/hidg0";
     int char_delay_us = 0;   /* 字符间延时（微秒），用户自定义防乱码 */
     int report_delay_us = 8000; /* 每个报告间延时，默认 8ms（匹配 bInterval=4） */
     int verbose = 0;
+    const char *stop_file = NULL;
+    const char *pause_file = NULL;
+    const char *progress_file = NULL;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--device") && i + 1 < argc)
@@ -121,6 +141,12 @@ int main(int argc, char *argv[]) {
             char_delay_us = atoi(argv[++i]) * 1000;
         else if (!strcmp(argv[i], "--report-delay") && i + 1 < argc)
             report_delay_us = atoi(argv[++i]) * 1000;
+        else if (!strcmp(argv[i], "--stop-file") && i + 1 < argc)
+            stop_file = argv[++i];
+        else if (!strcmp(argv[i], "--pause-file") && i + 1 < argc)
+            pause_file = argv[++i];
+        else if (!strcmp(argv[i], "--progress-file") && i + 1 < argc)
+            progress_file = argv[++i];
         else if (!strcmp(argv[i], "--verbose") || !strcmp(argv[i], "-v"))
             verbose = 1;
         else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
@@ -133,6 +159,9 @@ int main(int argc, char *argv[]) {
                 "  --report-delay MS   报告间延时毫秒 (默认: 8, 匹配 USB bInterval)\n"
                 "                     设为 0 可能导致 Alt 键卡住\n"
                 "  --verbose, -v       打印速度统计到 stderr\n"
+                "  --stop-file PATH    在字符边界停止\n"
+                "  --pause-file PATH   文件存在时暂停，移除后继续\n"
+                "  --progress-file PATH 记录已完成字符数\n"
                 "  --help, -h          显示帮助\n\n"
                 "输入格式 (stdin, 每行一条):\n"
                 "  code 54992          Alt 码输入一个字符\n"
@@ -151,10 +180,19 @@ int main(int argc, char *argv[]) {
     unsigned char buf[128];
     char line[256];
     int total = 0;
+    int exit_code = 0;
+    int progress_fd = progress_file ? open(progress_file, O_WRONLY | O_CREAT | O_TRUNC, 0600) : -1;
+    if (progress_file && progress_fd < 0) {
+        perror("progress file");
+        close(fd);
+        return 1;
+    }
+    save_progress(progress_fd, 0);
     struct timespec t_start, t_end;
     clock_gettime(CLOCK_MONOTONIC, &t_start);
 
     while (fgets(line, sizeof(line), stdin)) {
+        if (!wait_ready(stop_file, pause_file)) break;
         line[strcspn(line, "\r\n")] = 0;
         if (line[0] == 0) continue;
 
@@ -168,7 +206,6 @@ int main(int argc, char *argv[]) {
         }
 
         if (len <= 0) continue;
-        total++;
 
         /* 逐个报告发送，每个报告后等待 USB 传输
          * 这是关键：write() 非阻塞返回，但 USB host 需要 bInterval 时间消费
@@ -176,16 +213,27 @@ int main(int argc, char *argv[]) {
          */
         for (int r = 0; r < reports; r++) {
             ssize_t n = write(fd, buf + r * 8, 8);
-            if (n < 0 && verbose) perror("write");
+            if (n != 8) {
+                perror("write");
+                exit_code = 1;
+                goto finished;
+            }
             if (report_delay_us > 0)
                 usleep(report_delay_us);
         }
+        total++;
+        save_progress(progress_fd, total);
 
         /* 字符间延时（用户自定义防乱码） */
         if (char_delay_us > 0)
             usleep(char_delay_us);
     }
 
+finished:
+    /* Ensure keys are released even after a write error. */
+    make_report(buf, 0, 0);
+    if (write(fd, buf, 8) != 8) exit_code = 1;
+    if (progress_fd >= 0) close(progress_fd);
     clock_gettime(CLOCK_MONOTONIC, &t_end);
     double elapsed_ms = (t_end.tv_sec - t_start.tv_sec) * 1000.0 +
                         (t_end.tv_nsec - t_start.tv_nsec) / 1000000.0;
@@ -197,6 +245,6 @@ int main(int argc, char *argv[]) {
     }
 
     close(fd);
-    return 0;
+    return exit_code;
 }
 

@@ -281,6 +281,7 @@
         <button id="pasteBtn" class="secondary" type="button">粘贴</button>
         <button id="clearBtn" class="secondary" type="button">清空</button>
         <button id="typeBtn" class="primary">开始打字</button>
+        <button id="pauseBtn" class="secondary" disabled>暂停</button>
         <button id="stopBtn" class="danger" disabled>停止</button>
       </div>
       <div class="encoding-hint" id="encodingHint"></div>
@@ -598,6 +599,8 @@
     let typingStarting = false;
     let typingPreparation = null;
     let typingStateVersion = 0;
+    let typingJob = null;
+    let isPaused = false;
     let healthTimer = null;
     let _lastDeviceListSig = ""; // 用于检测设备列表是否变化
     let _deviceSwitching = false; // 防止切换时被 health 覆盖选中项
@@ -647,6 +650,7 @@
     }
 
     async function checkHealth() {
+      if (typingJob) return;
       const stateVersion = typingStateVersion;
       const r = await api("/api/health");
       if (!r.ok) return;
@@ -700,13 +704,16 @@
         $("stopBtn").disabled = true;
         log("打字结束", "ok");
       }
+      isPaused = !!r.paused;
+      $("pauseBtn").disabled = !r.busy;
+      $("pauseBtn").textContent = isPaused ? "继续" : "暂停";
 
       // 更新进度
       if (r.busy) {
         const pct = r.total > 0 ? (r.progress / r.total * 100) : 0;
         $("progressFill").style.width = pct + "%";
         $("progressNum").textContent = r.progress + " / " + r.total;
-        $("progressLabel").textContent = "正在打字...";
+        $("progressLabel").textContent = isPaused ? "已暂停" : "正在打字...";
       } else if (r.progress > 0 && r.progress >= r.total && r.total > 0) {
         $("progressFill").style.width = "100%";
         $("progressNum").textContent = r.progress + " / " + r.total;
@@ -771,14 +778,26 @@
         ${textToAltSequence.toString()}
         self.onmessage = function(event) {
           try {
-            const {text, encoding, mode, report_delay, gbkTable} = event.data;
+            const {text, encoding, mode, report_delay, gbkTable, base64Carry = "", final = true} = event.data;
             GBK_TABLE = gbkTable;
             GBK_AVAILABLE = !!gbkTable;
-            const items = textToAltSequence(text, encoding);
+            let items;
+            let carry = "";
+            if (encoding === "base64") {
+              let binary;
+              try { binary = unescape(encodeURIComponent(text)); }
+              catch (_) { binary = text; }
+              binary = base64Carry + binary;
+              const length = final ? binary.length : binary.length - binary.length % 3;
+              carry = binary.slice(length);
+              items = Array.from(btoa(binary.slice(0, length)), ch => ({code: ch.charCodeAt(0)}));
+            } else {
+              items = textToAltSequence(text, encoding);
+            }
             const header = JSON.stringify({encoding, mode, report_delay});
             const body = header.slice(0, -1) + ',"items":[\\n' +
               items.map(item => JSON.stringify(item)).join(',\\n') + '\\n]}';
-            self.postMessage({total: items.length, body});
+            self.postMessage({total: items.length, body, base64Carry: carry});
           } catch (error) {
             self.postMessage({error: error.message});
           }
@@ -786,7 +805,7 @@
       `;
     }
 
-    function prepareTypingRequest(text, encoding, mode, report_delay) {
+    function prepareTypingRequest(text, encoding, mode, report_delay, base64Carry = "", final = true) {
       return new Promise((resolve, reject) => {
         let worker = null;
         let url = null;
@@ -809,7 +828,7 @@
             else finish(event.data);
           };
           worker.onerror = () => finish(null, new Error("后台编码失败，请刷新网页后重试"));
-          worker.postMessage({text, encoding, mode, report_delay,
+          worker.postMessage({text, encoding, mode, report_delay, base64Carry, final,
             gbkTable: encoding === "gbk" ? GBK_TABLE : null});
         } catch (error) {
           finish(null, error);
@@ -817,70 +836,141 @@
       });
     }
 
-    async function startTyping() {
-      if (isTyping || typingStarting) return;
-      const text = $("textInput").value;
-      if (!text) {
-        toast("请输入要打字的文本", "err");
-        return;
+    const typingDelay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+    function nextTypingChunk(text, offset, encoding) {
+      const size = offset === 0 ? 32 : 128;
+      let end = Math.min(text.length, offset + size);
+      if (end < text.length && /[\uD800-\uDBFF]/.test(text[end - 1]) && /[\uDC00-\uDFFF]/.test(text[end])) end++;
+      return {text: text.slice(offset, end), end};
+    }
+
+    function showTypingProgress(job, health) {
+      const fraction = health && health.total > 0 ? Math.min(1, health.progress / health.total) : 0;
+      const position = job.offset + (job.end - job.offset) * fraction;
+      $("progressFill").style.width = (position / job.text.length * 100) + "%";
+      $("progressNum").textContent = "第 " + (job.parts + 1) + " 段" +
+        (health ? "：" + health.progress + " / " + health.total + " 项" : "");
+      $("progressLabel").textContent = job.cancelled ? "正在停止..." : job.paused ? "已暂停，点击继续可接着打字" :
+        job.active ? "正在分段打字..." : "正在准备下一段...";
+    }
+
+    async function waitTypingResume(job) {
+      while (job.paused && !job.cancelled) await typingDelay(50);
+    }
+
+    async function waitTypingSegment(job) {
+      for (;;) {
+        const health = await api("/api/health");
+        if (!health.ok) throw new Error("无法读取设备状态，请检查连接");
+        showTypingProgress(job, health);
+        if (health.last_error) throw new Error(health.last_error);
+        if (!health.busy) {
+          job.active = false;
+          if (!job.cancelled && health.progress < health.total) throw new Error("打字任务提前结束");
+          return;
+        }
+        await typingDelay(150);
       }
+    }
+
+    async function startTyping() {
+      if (isTyping || typingStarting || typingJob) return;
+      const text = $("textInput").value;
+      if (!text) { toast("请输入要打字的文本", "err"); return; }
       const encoding = $("encodingSelect").value;
       if (encoding === "gbk" && !GBK_AVAILABLE) {
-        toast("GBK 编码表未加载，请使用 Unicode 模式", "err");
-        return;
+        toast("GBK 编码表未加载，请使用 Unicode 模式", "err"); return;
       }
-      // 实时读取当前引擎模式和报告延时（无需保存即生效）
-      const mode = $("engineModeSelect").value;
-      const report_delay = parseInt($("reportDelaySlider").value, 10);
+      const job = {text, encoding, offset: 0, end: 0, parts: 0, base64Carry: "", active: false, paused: false, cancelled: false,
+        mode: $("engineModeSelect").value, report_delay: parseInt($("reportDelaySlider").value, 10)};
+      typingJob = job;
       typingStarting = true;
+      isTyping = true;
       typingStateVersion++;
       $("typeBtn").disabled = true;
       $("stopBtn").disabled = false;
-      $("progressFill").style.width = "0%";
-      $("progressNum").textContent = "";
-      $("progressLabel").textContent = "正在准备文本，可点击停止取消...";
+      $("pauseBtn").disabled = false;
+      $("pauseBtn").textContent = "暂停";
+      log("开始分段打字: 编码=" + encoding);
       try {
-        const prepared = await prepareTypingRequest(text, encoding, mode, report_delay);
-        if (!prepared) return;
-        if (prepared.total === 0) {
-          toast("没有可打字的内容", "err");
-          return;
+        while (job.offset < text.length && !job.cancelled) {
+          await waitTypingResume(job);
+          if (job.cancelled) break;
+          const chunk = nextTypingChunk(text, job.offset, encoding);
+          job.end = chunk.end;
+          showTypingProgress(job);
+          const prepared = await prepareTypingRequest(chunk.text, encoding, job.mode, job.report_delay,
+            job.base64Carry, chunk.end === text.length);
+          if (!prepared || job.cancelled) break;
+          await waitTypingResume(job);
+          if (job.cancelled) break;
+          if (prepared.total > 0) {
+            const result = await api("/api/type", "POST", prepared.body);
+            if (!result.ok) throw new Error(result.msg || "分段发送失败");
+            job.active = true;
+            if (job.cancelled) await api("/api/stop", "POST");
+            else if (job.paused) await api("/api/pause", "POST");
+            await waitTypingSegment(job);
+          }
+          job.offset = chunk.end;
+          job.base64Carry = prepared.base64Carry;
+          job.parts++;
+          await typingDelay(0);
         }
-        $("stopBtn").disabled = true;
-        $("progressLabel").textContent = "正在发送文本到设备...";
-        $("progressNum").textContent = prepared.total + " 项";
-        log(`发送文本: 编码=${encoding}, 共 ${prepared.total} 项, 引擎=${mode}, 报告延时=${report_delay}ms`);
-        const r = await api("/api/type", "POST", prepared.body);
-        if (r.ok) {
-          isTyping = true;
-          $("progressLabel").textContent = "正在打字...";
-          toast("开始打字", "ok");
-        } else {
-          toast(r.msg || "打字失败", "err");
-          log("打字失败: " + r.msg, "err");
-        }
+        $("progressLabel").textContent = job.cancelled ? "已停止，输入文本已保留" : "完成";
+        if (!job.cancelled) $("progressFill").style.width = "100%";
+        log(job.cancelled ? "已停止打字" : "打字完成", "ok");
       } catch (error) {
-        toast("文本准备失败: " + error.message, "err");
-        log("文本准备失败: " + error.message, "err");
+        // 请求/状态异常时停止设备，避免网页退出循环后继续输入。
+        await api("/api/stop", "POST");
+        $("progressLabel").textContent = "打字中断: " + error.message;
+        toast(error.message, "err");
+        log("打字中断: " + error.message, "err");
       } finally {
+        typingJob = null;
         typingStarting = false;
+        isTyping = false;
+        isPaused = false;
         typingStateVersion++;
-        $("typeBtn").disabled = isTyping;
-        $("stopBtn").disabled = !isTyping;
-        if (!isTyping) $("progressLabel").textContent = "未开始打字";
+        $("typeBtn").disabled = false;
+        $("stopBtn").disabled = true;
+        $("pauseBtn").disabled = true;
+        $("pauseBtn").textContent = "暂停";
+      }
+    }
+
+    async function pauseTyping() {
+      const job = typingJob;
+      if (job && job.cancelled) return;
+      const paused = job ? !job.paused : !isPaused;
+      if (job) job.paused = paused;
+      isPaused = paused;
+      $("pauseBtn").textContent = paused ? "继续" : "暂停";
+      if (job) showTypingProgress(job);
+      if (!job || job.active) {
+        $("pauseBtn").disabled = true;
+        const result = await api(paused ? "/api/pause" : "/api/resume", "POST");
+        if (!result.ok) {
+          if (job) job.paused = !paused;
+          isPaused = !paused;
+          $("pauseBtn").textContent = isPaused ? "继续" : "暂停";
+          toast(result.msg || "暂停/继续失败", "err");
+        }
+        $("pauseBtn").disabled = job ? job.cancelled : !isTyping;
       }
     }
 
     async function stopTyping() {
-      if (typingPreparation) {
-        typingPreparation.cancel();
-        log("已取消文本准备");
-        return;
-      }
-      const r = await api("/api/stop", "POST");
-      if (r.ok) {
-        log("已请求停止打字", "warn");
-        $("stopBtn").disabled = true;
+      const job = typingJob;
+      if (job) job.cancelled = true;
+      if (typingPreparation) typingPreparation.cancel();
+      $("stopBtn").disabled = true;
+      $("pauseBtn").disabled = true;
+      $("progressLabel").textContent = "正在停止...";
+      if (!job || job.active) {
+        const result = await api("/api/stop", "POST");
+        if (!result.ok) toast(result.msg || "停止失败", "err");
       }
     }
 
@@ -1114,6 +1204,7 @@
     // ---------- 事件绑定 ----------
     $("typeBtn").addEventListener("click", startTyping);
     $("stopBtn").addEventListener("click", stopTyping);
+    $("pauseBtn").addEventListener("click", pauseTyping);
     $("clearLogBtn").addEventListener("click", () => { logBox.innerHTML = ""; });
 
     // ---------- 启动 ----------

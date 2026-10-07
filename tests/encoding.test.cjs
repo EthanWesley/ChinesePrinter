@@ -12,7 +12,7 @@ const html = readFileSync(path.join(root, 'templates/index.html'), 'utf8');
 const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
 const encodingScript = script.slice(script.indexOf('let GBK_TABLE'), script.indexOf('// ---------- 状态管理'));
 const context = vm.createContext({
-  btoa: text => Buffer.from(text, 'binary').toString('base64'), unescape, encodeURIComponent
+  btoa: text => Buffer.from(text, 'binary').toString('base64'), unescape, encodeURIComponent, setTimeout
 });
 vm.runInContext(encodingScript, context);
 const convert = (text, encoding) => JSON.parse(JSON.stringify(context.textToAltSequence(text, encoding)));
@@ -40,7 +40,7 @@ context.Worker = class {
   postMessage(data) { this.worker.postMessage(data); }
   terminate() { this.worker.terminate(); }
 };
-vm.runInContext('let isTyping = false; let typingStarting = false; let typingPreparation = null; let typingStateVersion = 0;', context);
+vm.runInContext('let isTyping = false; let typingStarting = false; let typingPreparation = null; let typingStateVersion = 0; let typingJob = null; let isPaused = false;', context);
 vm.runInContext(script.slice(script.indexOf('function typingWorkerSource('), script.indexOf('async function startTyping(')), context);
 
 test('page script parses and exposes the MDWIN option and input method hint', () => {
@@ -85,27 +85,27 @@ test('startTyping sends MDWIN items without requiring a GBK table', async () => 
   const elements = {
     textInput: {value: '中 A\n'}, encodingSelect: {value: 'mdwin'},
     engineModeSelect: {value: 'auto'}, reportDelaySlider: {value: '5'},
-    typeBtn: {}, stopBtn: {}, progressFill: {style: {}}, progressNum: {}, progressLabel: {}
+    typeBtn: {}, stopBtn: {}, pauseBtn: {}, progressFill: {style: {}}, progressNum: {}, progressLabel: {}
   };
   const requests = [];
   context.$ = id => elements[id];
   context.log = context.toast = () => {};
   context.fetch = async (url, opts) => {
     requests.push({url, ...opts});
-    return {json: async () => ({ok: true})};
+    return {json: async () => ({ok: true, busy: false, progress: 4, total: 4})};
   };
   vm.runInContext('GBK_AVAILABLE = false;', context);
   vm.runInContext(script.slice(script.indexOf('async function api('), script.indexOf('// ---------- 编码转换')), context);
-  vm.runInContext(script.slice(script.indexOf('async function startTyping('), script.indexOf('async function stopTyping(')), context);
+  vm.runInContext(script.slice(script.indexOf('async function startTyping('), script.indexOf('// ---------- 延时设置')), context);
   await context.startTyping();
-  assert.equal(requests.length, 1);
+  assert.equal(requests.filter(r => r.url === '/api/type').length, 1);
   assert.equal(requests[0].url, '/api/type');
   assert.equal(requests[0].method, 'POST');
   assert.deepEqual(JSON.parse(requests[0].body), {
     encoding: 'mdwin', items: [{code: 19913}, {code: 964}, {code: 933}, {control: 'enter'}],
     mode: 'auto', report_delay: 5
   });
-  assert.equal(elements.typeBtn.disabled, true);
+  assert.equal(elements.typeBtn.disabled, false);
 });
 
 test('actual server awk parser preserves interleaved codes and controls', () => {
@@ -140,6 +140,75 @@ test('worker preserves every encoding and serializes bounded JSON lines', async 
     assert.ok(prepared.body.split('\n').every(line => line.length < 100));
   }
   assert.equal(blobs.size, 0);
+});
+
+test('segmented output matches whole-text encoding including Base64 carry and surrogate boundaries', async () => {
+  vm.runInContext('GBK_TABLE = {"中": 54992}; GBK_AVAILABLE = true;', context);
+  const text = 'A' + '中'.repeat(30) + '😀' + '中'.repeat(140) + 'B\n\t ';
+  for (const encoding of ['mdwin', 'gbk', 'unicode', 'ascii', 'base64']) {
+    let offset = 0;
+    let carry = '';
+    const items = [];
+    while (offset < text.length) {
+      const chunk = context.nextTypingChunk(text, offset, encoding);
+      assert.ok(chunk.text.length <= (offset === 0 ? 33 : 129));
+      assert.ok(!/[\uD800-\uDBFF]$/.test(chunk.text), 'must not split a surrogate pair');
+      const prepared = await context.prepareTypingRequest(chunk.text, encoding, 'auto', 5, carry, chunk.end === text.length);
+      items.push(...JSON.parse(prepared.body).items);
+      carry = prepared.base64Carry;
+      offset = chunk.end;
+    }
+    assert.equal(carry, '');
+    assert.deepEqual(items, convert(text, encoding));
+  }
+});
+
+test('a long job submits its first small segment and pause/resume/stop never sends the remaining text', async () => {
+  const text = '中 A\n'.repeat(100000);
+  const elements = {
+    textInput: {value: text}, encodingSelect: {value: 'mdwin'},
+    engineModeSelect: {value: 'auto'}, reportDelaySlider: {value: '5'},
+    typeBtn: {}, stopBtn: {}, pauseBtn: {}, progressFill: {style: {}}, progressNum: {}, progressLabel: {}
+  };
+  context.$ = id => elements[id];
+  const backend = {busy: false, paused: false, progress: 0, total: 0};
+  const requests = [];
+  let firstHealth;
+  const ready = new Promise(resolve => { firstHealth = resolve; });
+  context.fetch = async (url, opts) => {
+    requests.push({url, ...opts});
+    if (url === '/api/type') {
+      const body = JSON.parse(opts.body);
+      backend.busy = true;
+      backend.total = body.items.length;
+    } else if (url === '/api/pause') backend.paused = true;
+    else if (url === '/api/resume') backend.paused = false;
+    else if (url === '/api/stop') backend.busy = false;
+    else if (url === '/api/health') {
+      if (backend.busy && !backend.paused) backend.progress++;
+      firstHealth();
+    }
+    return {json: async () => ({ok: true, ...backend})};
+  };
+  const pending = context.startTyping();
+  await ready;
+  assert.equal(JSON.parse(requests[0].body).items.length, 32);
+  await context.pauseTyping();
+  assert.equal(elements.pauseBtn.textContent, '继续');
+  const pausedAt = backend.progress;
+  await new Promise(resolve => setTimeout(resolve, 220));
+  assert.equal(backend.progress, pausedAt);
+  assert.equal(requests.filter(r => r.url === '/api/type').length, 1);
+  await context.pauseTyping();
+  assert.equal(elements.pauseBtn.textContent, '暂停');
+  await new Promise(resolve => setTimeout(resolve, 180));
+  assert.ok(backend.progress > pausedAt);
+  await context.stopTyping();
+  await pending;
+  assert.equal(requests.filter(r => r.url === '/api/type').length, 1);
+  assert.equal(requests.filter(r => r.url === '/api/stop').length, 1);
+  assert.equal(elements.textInput.value, text);
+  assert.equal(elements.typeBtn.disabled, false);
 });
 
 test('long-text preparation leaves the main event loop responsive', async () => {
@@ -177,7 +246,7 @@ test('preparation can be cancelled without sending or losing the draft', async (
   const elements = {
     textInput: {value: draft}, encodingSelect: {value: 'mdwin'},
     engineModeSelect: {value: 'auto'}, reportDelaySlider: {value: '5'},
-    typeBtn: {}, stopBtn: {}, progressFill: {style: {}}, progressNum: {}, progressLabel: {}
+    typeBtn: {}, stopBtn: {}, pauseBtn: {}, progressFill: {style: {}}, progressNum: {}, progressLabel: {}
   };
   context.$ = id => elements[id];
   context.fetch = async () => { throw new Error('cancelled preparation must not send'); };
@@ -197,7 +266,7 @@ test('worker startup errors restore the controls and preserve the input', async 
   const elements = {
     textInput: {value: '中A'}, encodingSelect: {value: 'mdwin'},
     engineModeSelect: {value: 'auto'}, reportDelaySlider: {value: '5'},
-    typeBtn: {}, stopBtn: {}, progressFill: {style: {}}, progressNum: {}, progressLabel: {}
+    typeBtn: {}, stopBtn: {}, pauseBtn: {}, progressFill: {style: {}}, progressNum: {}, progressLabel: {}
   };
   context.$ = id => elements[id];
   const NativeWorker = context.Worker;
@@ -286,6 +355,61 @@ test('HTTP handler reads a long worker request completely for the native engine'
   assert.equal(JSON.parse(readFileSync(statusFile, 'utf8')).busy, false);
   assert.equal(readFileSync(path.join(dir, 'state/written'), 'utf8'),
     'code 19913\ncontrol enter\ncode 933\n'.repeat(10000));
+});
+
+test('real Shell HTTP pause/resume/stop controls preserve the current position', async () => {
+  const archive = path.join(root, '.deleted', '2026-10-07');
+  mkdirSync(archive, {recursive: true});
+  const dir = mkdtempSync(path.join(archive, 'shell-controls-check-'));
+  mkdirSync(path.join(dir, 'state'));
+  writeFileSync(path.join(dir, 'state/settings.env'), 'KEY_DELAY=0\nALT_RELEASE_DELAY=0\nCHAR_DELAY=0\nTYPE_MODE=shell\nREPORT_DELAY=5\n');
+  writeFileSync(path.join(dir, 'server.sh'), readFileSync(path.join(root, 'server.sh')));
+  writeFileSync(path.join(dir, 'fake-hid'), '');
+  writeFileSync(path.join(dir, 'hid_keyboard.sh'), `
+hid_init() { return 0; }
+hid_type_alt_code() { printf 'code %s\\n' "$1" >> "$STATE_DIR/written"; sleep 0.05; }
+hid_type_control_char() { printf 'control %s\\n' "$1" >> "$STATE_DIR/written"; sleep 0.05; }
+`);
+  const posix = value => value.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_, drive) => '/' + drive.toLowerCase());
+  const env = {...process.env, INSTALL_DIR: posix(dir), STATE_DIR: posix(path.join(dir, 'state')),
+    HID_DEVICE: posix(path.join(dir, 'fake-hid')), LOG_FILE: posix(path.join(dir, 'log')), TYPE_MODE: 'shell'};
+  const shell = process.platform === 'win32' ? process.env.TEST_BASH || 'C:/Program Files/Git/bin/bash.exe' : 'sh';
+  const request = (url, body) => {
+    const content = body ? JSON.stringify(body) : '';
+    const raw = `${body ? 'POST' : url === '/api/health' ? 'GET' : 'POST'} ${url} HTTP/1.1\r\nContent-Length: ${Buffer.byteLength(content)}\r\n\r\n${content}`;
+    const result = spawnSync(shell, [posix(path.join(dir, 'server.sh')), 'handle'], {env, input: raw, encoding: 'utf8', timeout: 10000});
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout.split('\r\n\r\n')[1]);
+  };
+  const written = () => existsSync(path.join(dir, 'state/written')) ? readFileSync(path.join(dir, 'state/written'), 'utf8') : '';
+  assert.equal(request('/api/type', {encoding: 'mdwin', items: Array.from({length: 40}, (_, i) => ({code: 933 + i})), mode: 'shell'}).ok, true);
+  try {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(request('/api/pause').ok, true);
+    await new Promise(resolve => setTimeout(resolve, 120));
+    const pausedText = written();
+    const health = request('/api/health');
+    assert.equal(health.busy, true);
+    assert.equal(health.paused, true);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.equal(written(), pausedText);
+    assert.equal(request('/api/resume').ok, true);
+    await new Promise(resolve => setTimeout(resolve, 150));
+    assert.ok(written().length > pausedText.length);
+    assert.equal(request('/api/stop').ok, true);
+    const deadline = Date.now() + 10000;
+    const statusFile = path.join(dir, 'state/status.json');
+    while (JSON.parse(readFileSync(statusFile, 'utf8')).busy && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.equal(JSON.parse(readFileSync(statusFile, 'utf8')).busy, false);
+    const lines = written().trim().split('\n');
+    assert.ok(lines.length < 40);
+    assert.deepEqual(lines, Array.from({length: lines.length}, (_, i) => 'code ' + (933 + i)));
+  } finally {
+    request('/api/stop');
+  }
 });
 
 (async () => {
