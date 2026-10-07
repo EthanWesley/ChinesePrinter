@@ -509,6 +509,8 @@ api_type() {
     _req_mode=$(json_get "$_body" "mode")
     _req_report_delay=$(json_get "$_body" "report_delay")
 
+    # 在启动任务前更新状态；后台任务的输出必须脱离 HTTP 响应管道。
+    update_status true 0 "$_total" "$_encoding" ""
     (
         # 重新加载最新延时设置
         . "$SETTINGS_FILE" 2>/dev/null
@@ -548,8 +550,6 @@ api_type() {
                 fi
                 ;;
         esac
-
-        update_status true 0 "$_total" "$_encoding" ""
 
         if [ "$_use_native" = "1" ]; then
             # ===== C 原生加速路径 =====
@@ -611,7 +611,7 @@ api_type() {
         rm -f "$_items_file" "$STOP_FLAG"
         update_status false "$_progress" "$_total" "$_encoding" ""
         log "打字完成: $_progress/$_total"
-    ) &
+    ) </dev/null >> "$LOG_FILE" 2>&1 &
 
     printf '{"ok":true,"msg":"开始打字","total":%s,"encoding":"%s"}' "$_total" "$_encoding"
 }
@@ -653,7 +653,8 @@ handle_request() {
     # 读取请求体（如果有）
     _body=""
     if [ "$_content_length" != "0" ] && [ -n "$_content_length" ]; then
-        _body=$(dd bs=1 count="$_content_length" 2>/dev/null)
+        # head 按块读取且严格限制字节数，避免 dd bs=1 的逐字节系统调用。
+        _body=$(head -c "$_content_length" 2>/dev/null)
     fi
 
     # 路由

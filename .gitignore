@@ -29,3 +29,6 @@ Thumbs.db
 # 配置文件（可能含敏感信息）
 config.yaml
 *.env.local
+
+# 回收及保留的检查产物
+.deleted/
