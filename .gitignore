@@ -40,3 +40,6 @@ config.yaml
 .workbuddy-ai/
 chrome-extension/icons/a.png
 chrome-extension/icons/打字机logo设计.png
+
+# 交叉编译依赖源码与构建产物
+third_party/
