@@ -51,7 +51,10 @@ cp mcp-server/config.json.example ~/.chinese-printer-mcp.json
 
 确认连接：`get_status` 返回 `ok: true`，检查 `capture_available` / `mouse_available` / `keyboard_available` 与 `screen`。
 
-`set_config` 的 `mouse_assume_absolute` 目前仅记录在配置和 `get_status` 中，翻译层仍按相对位移处理；`rehome_before_first_move`、`poll_interval_ms` 会实际生效。
+`set_config` 的 `mouse_assume_absolute`、`rehome_before_first_move`、`poll_interval_ms` 均会实际生效。
+绝对坐标模式需要两端一致：PC 侧 `set_config(mouse_assume_absolute=true)`，同时设备端
+`/opt/chinese-printer/chinese-printer.env` 设 `MOUSE_ABSOLUTE=1` 并重启服务；此时坐标以
+`mabs` 单条报告下发（0–32767 归一化），不再分段与 rehome。
 
 ## 接入 harness
 
@@ -142,6 +145,7 @@ asyncio.run(main())
 
 - `x`/`y` 是 `capture_screen` 原图像素坐标（左上角原点），与 `run_sequence` 一致；返回图会按 `scale` 缩小（最长边另有 1600px 上限），换算后再填：`原图坐标 = 图中坐标 ÷ 实际缩放比`。
 - 设备鼠标是相对位移 gadget：PC 侧维护假想光标位置，单次移动按 127px 分段。
+- 若 probe 显示鼠标 gadget 为绝对坐标（report descriptor 含 Absolute 位），两端都切到绝对模式（见「配置」），每条 `mabs` 直达目标点。
 - 序列首个鼠标动作前默认 rehome（连续 `mmove -127 -127` 钉到左上角），人工动过鼠标后开新序列也能恢复。
 - 仍漂移时先 `capture_screen` 确认界面，再重发失败点之后的动作；`failed_step` 之前的动作已生效，不要整段重放。
 
