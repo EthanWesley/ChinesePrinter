@@ -155,27 +155,29 @@ static int write_reports(int fd, const unsigned char *buf, int reports, int size
     return 0;
 }
 
-static int write_mouse(int dx, int dy, int wheel, int hwheel) {
-    if (g_mouse_fd < 0) {
-        g_mouse_fd = open(g_mouse_dev, O_WRONLY);
-        if (g_mouse_fd < 0) {
-            fprintf(stderr, "seq_writer: 无法打开鼠标设备 %s: %s\n", g_mouse_dev, strerror(errno));
-            return -1;
-        }
+static int ensure_mouse_open(void) {
+    if (g_mouse_fd >= 0) return 0;
+    if (!g_mouse_dev || !*g_mouse_dev) {
+        fprintf(stderr, "seq_writer: 未配置鼠标设备（缺少 --mouse 参数）\n");
+        return -1;
     }
+    g_mouse_fd = open(g_mouse_dev, O_WRONLY);
+    if (g_mouse_fd < 0) {
+        fprintf(stderr, "seq_writer: 无法打开鼠标设备 %s: %s\n", g_mouse_dev, strerror(errno));
+        return -1;
+    }
+    return 0;
+}
+
+static int write_mouse(int dx, int dy, int wheel, int hwheel) {
+    if (ensure_mouse_open() != 0) return -1;
     unsigned char rep[16];
     make_mouse_report(rep, dx, dy, wheel, hwheel);
     return write_reports(g_mouse_fd, rep, 1, g_mouse_report_size);
 }
 
 static int write_mouse_abs(int x, int y) {
-    if (g_mouse_fd < 0) {
-        g_mouse_fd = open(g_mouse_dev, O_WRONLY);
-        if (g_mouse_fd < 0) {
-            fprintf(stderr, "seq_writer: 无法打开鼠标设备 %s: %s\n", g_mouse_dev, strerror(errno));
-            return -1;
-        }
-    }
+    if (ensure_mouse_open() != 0) return -1;
     unsigned char rep[16];
     make_mouse_abs(rep, x, y);
     return write_reports(g_mouse_fd, rep, 1, g_mouse_report_size);

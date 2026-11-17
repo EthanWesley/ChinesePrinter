@@ -43,3 +43,8 @@ chrome-extension/icons/打字机logo设计.png
 
 # 交叉编译依赖源码与构建产物
 third_party/
+
+# MCP 服务器本地配置与测试缓存
+mcp-server/config.json
+mcp-server/.pytest_cache/
+.pytest_cache/

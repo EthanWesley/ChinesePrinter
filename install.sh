@@ -435,6 +435,10 @@ ALT_RELEASE_DELAY=0
 CHAR_DELAY=0
 # AI 自动化通道（截图 + 键鼠序列，MCP 服务器连接此端口）
 AUTOMATION_PORT=$AUTOMATION_PORT
+# 鼠标 gadget 设置：留空自动探测；绝对坐标 gadget 时设 MOUSE_ABSOLUTE=1
+MOUSE_DEVICE=
+MOUSE_REPORT_SIZE=4
+MOUSE_ABSOLUTE=0
 EOF
     ok "配置文件已创建: $ENV_FILE"
 fi

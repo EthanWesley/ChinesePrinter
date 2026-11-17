@@ -1,0 +1,27 @@
+[project]
+name = "chinese-printer-mcp"
+version = "0.1.0"
+description = "MCP server for the ChinesePrinter AI automation channel (capture + HID sequences)"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=1.2.0",
+    "httpx>=0.27",
+    "pillow>=10.0",
+    "pydantic>=2.6",
+]
+
+[project.scripts]
+chinese-printer-mcp = "chinese_printer_mcp.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["chinese_printer_mcp*"]
+
+[tool.setuptools.package-data]
+chinese_printer_mcp = ["data/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

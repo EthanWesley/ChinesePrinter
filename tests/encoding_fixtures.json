@@ -1,0 +1,2172 @@
+[
+ {
+  "text": "",
+  "encoding": "gbk",
+  "items": []
+ },
+ {
+  "text": "",
+  "encoding": "unicode",
+  "items": []
+ },
+ {
+  "text": "",
+  "encoding": "mdwin",
+  "items": []
+ },
+ {
+  "text": "",
+  "encoding": "ascii",
+  "items": []
+ },
+ {
+  "text": "",
+  "encoding": "base64",
+  "items": []
+ },
+ {
+  "text": "A",
+  "encoding": "gbk",
+  "items": [
+   {
+    "code": 65
+   }
+  ]
+ },
+ {
+  "text": "A",
+  "encoding": "unicode",
+  "items": [
+   {
+    "code": 65
+   }
+  ]
+ },
+ {
+  "text": "A",
+  "encoding": "mdwin",
+  "items": [
+   {
+    "code": 933
+   }
+  ]
+ },
+ {
+  "text": "A",
+  "encoding": "ascii",
+  "items": [
+   {
+    "code": 65
+   }
+  ]
+ },
+ {
+  "text": "A",
+  "encoding": "base64",
+  "items": [
+   {
+    "code": 81
+   },
+   {
+    "code": 81
+   },
+   {
+    "code": 61
+   },
+   {
+    "code": 61
+   }
+  ]
+ },
+ {
+  "text": "a1b2c3",
+  "encoding": "gbk",
+  "items": [
+   {
+    "code": 97
+   },
+   {
+    "code": 49
+   },
+   {
+    "code": 98
+   },
+   {
+    "code": 50
+   },
+   {
+    "code": 99
+   },
+   {
+    "code": 51
+   }
+  ]
+ },
+ {
+  "text": "a1b2c3",
+  "encoding": "unicode",
+  "items": [
+   {
+    "code": 97
+   },
+   {
+    "code": 49
+   },
+   {
+    "code": 98
+   },
+   {
+    "code": 50
+   },
+   {
+    "code": 99
+   },
+   {
+    "code": 51
+   }
+  ]
+ },
+ {
+  "text": "a1b2c3",
+  "encoding": "mdwin",
+  "items": [
+   {
+    "code": 901
+   },
+   {
+    "code": 981
+   },
+   {
+    "code": 902
+   },
+   {
+    "code": 982
+   },
+   {
+    "code": 903
+   },
+   {
+    "code": 983
+   }
+  ]
+ },
+ {
+  "text": "a1b2c3",
+  "encoding": "ascii",
+  "items": [
+   {
+    "code": 97
+   },
+   {
+    "code": 49
+   },
+   {
+    "code": 98
+   },
+   {
+    "code": 50
+   },
+   {
+    "code": 99
+   },
+   {
+    "code": 51
+   }
+  ]
+ },
+ {
+  "text": "a1b2c3",
+  "encoding": "base64",
+  "items": [
+   {
+    "code": 89
+   },
+   {
+    "code": 84
+   },
+   {
+    "code": 70
+   },
+   {
+    "code": 105
+   },
+   {
+    "code": 77
+   },
+   {
+    "code": 109
+   },
+   {
+    "code": 77
+   },
+   {
+    "code": 122
+   }
+  ]
+ },
+ {
+  "text": "中医A ！",
+  "encoding": "gbk",
+  "items": [
+   {
+    "code": 54992
+   },
+   {
+    "code": 53949
+   },
+   {
+    "code": 65
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 41889
+   }
+  ]
+ },
+ {
+  "text": "中医A ！",
+  "encoding": "unicode",
+  "items": [
+   {
+    "code": 20013
+   },
+   {
+    "code": 21307
+   },
+   {
+    "code": 65
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 65281
+   }
+  ]
+ },
+ {
+  "text": "中医A ！",
+  "encoding": "mdwin",
+  "items": [
+   {
+    "code": 19913
+   },
+   {
+    "code": 20703
+   },
+   {
+    "code": 933
+   },
+   {
+    "code": 964
+   },
+   {
+    "code": 64741
+   }
+  ]
+ },
+ {
+  "text": "中医A ！",
+  "encoding": "ascii",
+  "items": [
+   {
+    "code": 65
+   },
+   {
+    "control": "space"
+   }
+  ]
+ },
+ {
+  "text": "中医A ！",
+  "encoding": "base64",
+  "items": [
+   {
+    "code": 53
+   },
+   {
+    "code": 76
+   },
+   {
+    "code": 105
+   },
+   {
+    "code": 116
+   },
+   {
+    "code": 53
+   },
+   {
+    "code": 89
+   },
+   {
+    "code": 121
+   },
+   {
+    "code": 55
+   },
+   {
+    "code": 81
+   },
+   {
+    "code": 83
+   },
+   {
+    "code": 68
+   },
+   {
+    "code": 118
+   },
+   {
+    "code": 118
+   },
+   {
+    "code": 73
+   },
+   {
+    "code": 69
+   },
+   {
+    "code": 61
+   }
+  ]
+ },
+ {
+  "text": "你好，世界",
+  "encoding": "gbk",
+  "items": [
+   {
+    "code": 50403
+   },
+   {
+    "code": 47811
+   },
+   {
+    "code": 41900
+   },
+   {
+    "code": 51904
+   },
+   {
+    "code": 48615
+   }
+  ]
+ },
+ {
+  "text": "你好，世界",
+  "encoding": "unicode",
+  "items": [
+   {
+    "code": 20320
+   },
+   {
+    "code": 22909
+   },
+   {
+    "code": 65292
+   },
+   {
+    "code": 19990
+   },
+   {
+    "code": 30028
+   }
+  ]
+ },
+ {
+  "text": "你好，世界",
+  "encoding": "mdwin",
+  "items": [
+   {
+    "code": 19588
+   },
+   {
+    "code": 23193
+   },
+   {
+    "code": 64744
+   },
+   {
+    "code": 19954
+   },
+   {
+    "code": 30376
+   }
+  ]
+ },
+ {
+  "text": "你好，世界",
+  "encoding": "ascii",
+  "items": []
+ },
+ {
+  "text": "你好，世界",
+  "encoding": "base64",
+  "items": [
+   {
+    "code": 53
+   },
+   {
+    "code": 76
+   },
+   {
+    "code": 50
+   },
+   {
+    "code": 103
+   },
+   {
+    "code": 53
+   },
+   {
+    "code": 97
+   },
+   {
+    "code": 87
+   },
+   {
+    "code": 57
+   },
+   {
+    "code": 55
+   },
+   {
+    "code": 55
+   },
+   {
+    "code": 121
+   },
+   {
+    "code": 77
+   },
+   {
+    "code": 53
+   },
+   {
+    "code": 76
+   },
+   {
+    "code": 105
+   },
+   {
+    "code": 87
+   },
+   {
+    "code": 53
+   },
+   {
+    "code": 53
+   },
+   {
+    "code": 87
+   },
+   {
+    "code": 77
+   }
+  ]
+ },
+ {
+  "text": "测试 中文 与 English 混合 123",
+  "encoding": "gbk",
+  "items": [
+   {
+    "code": 45794
+   },
+   {
+    "code": 51924
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 54992
+   },
+   {
+    "code": 52932
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 54251
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 69
+   },
+   {
+    "code": 110
+   },
+   {
+    "code": 103
+   },
+   {
+    "code": 108
+   },
+   {
+    "code": 105
+   },
+   {
+    "code": 115
+   },
+   {
+    "code": 104
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 48108
+   },
+   {
+    "code": 47823
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 49
+   },
+   {
+    "code": 50
+   },
+   {
+    "code": 51
+   }
+  ]
+ },
+ {
+  "text": "测试 中文 与 English 混合 123",
+  "encoding": "unicode",
+  "items": [
+   {
+    "code": 27979
+   },
+   {
+    "code": 35797
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 20013
+   },
+   {
+    "code": 25991
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 19982
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 69
+   },
+   {
+    "code": 110
+   },
+   {
+    "code": 103
+   },
+   {
+    "code": 108
+   },
+   {
+    "code": 105
+   },
+   {
+    "code": 115
+   },
+   {
+    "code": 104
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 28151
+   },
+   {
+    "code": 21512
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 49
+   },
+   {
+    "code": 50
+   },
+   {
+    "code": 51
+   }
+  ]
+ },
+ {
+  "text": "测试 中文 与 English 混合 123",
+  "encoding": "mdwin",
+  "items": [
+   {
+    "code": 28335
+   },
+   {
+    "code": 34865
+   },
+   {
+    "code": 964
+   },
+   {
+    "code": 19913
+   },
+   {
+    "code": 26211
+   },
+   {
+    "code": 964
+   },
+   {
+    "code": 19946
+   },
+   {
+    "code": 964
+   },
+   {
+    "code": 929
+   },
+   {
+    "code": 906
+   },
+   {
+    "code": 899
+   },
+   {
+    "code": 904
+   },
+   {
+    "code": 909
+   },
+   {
+    "code": 919
+   },
+   {
+    "code": 908
+   },
+   {
+    "code": 964
+   },
+   {
+    "code": 28179
+   },
+   {
+    "code": 22508
+   },
+   {
+    "code": 964
+   },
+   {
+    "code": 981
+   },
+   {
+    "code": 982
+   },
+   {
+    "code": 983
+   }
+  ]
+ },
+ {
+  "text": "测试 中文 与 English 混合 123",
+  "encoding": "ascii",
+  "items": [
+   {
+    "control": "space"
+   },
+   {
+    "control": "space"
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 69
+   },
+   {
+    "code": 110
+   },
+   {
+    "code": 103
+   },
+   {
+    "code": 108
+   },
+   {
+    "code": 105
+   },
+   {
+    "code": 115
+   },
+   {
+    "code": 104
+   },
+   {
+    "control": "space"
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 49
+   },
+   {
+    "code": 50
+   },
+   {
+    "code": 51
+   }
+  ]
+ },
+ {
+  "text": "测试 中文 与 English 混合 123",
+  "encoding": "base64",
+  "items": [
+   {
+    "code": 53
+   },
+   {
+    "code": 114
+   },
+   {
+    "code": 87
+   },
+   {
+    "code": 76
+   },
+   {
+    "code": 54
+   },
+   {
+    "code": 75
+   },
+   {
+    "code": 43
+   },
+   {
+    "code": 86
+   },
+   {
+    "code": 73
+   },
+   {
+    "code": 79
+   },
+   {
+    "code": 83
+   },
+   {
+    "code": 52
+   },
+   {
+    "code": 114
+   },
+   {
+    "code": 101
+   },
+   {
+    "code": 97
+   },
+   {
+    "code": 87
+   },
+   {
+    "code": 104
+   },
+   {
+    "code": 121
+   },
+   {
+    "code": 68
+   },
+   {
+    "code": 107
+   },
+   {
+    "code": 117
+   },
+   {
+    "code": 73
+   },
+   {
+    "code": 52
+   },
+   {
+    "code": 103
+   },
+   {
+    "code": 82
+   },
+   {
+    "code": 87
+   },
+   {
+    "code": 53
+   },
+   {
+    "code": 110
+   },
+   {
+    "code": 98
+   },
+   {
+    "code": 71
+   },
+   {
+    "code": 108
+   },
+   {
+    "code": 122
+   },
+   {
+    "code": 97
+   },
+   {
+    "code": 67
+   },
+   {
+    "code": 68
+   },
+   {
+    "code": 109
+   },
+   {
+    "code": 116
+   },
+   {
+    "code": 55
+   },
+   {
+    "code": 102
+   },
+   {
+    "code": 108
+   },
+   {
+    "code": 107
+   },
+   {
+    "code": 73
+   },
+   {
+    "code": 103
+   },
+   {
+    "code": 103
+   },
+   {
+    "code": 77
+   },
+   {
+    "code": 84
+   },
+   {
+    "code": 73
+   },
+   {
+    "code": 122
+   }
+  ]
+ },
+ {
+  "text": "第一行\n第二行",
+  "encoding": "gbk",
+  "items": [
+   {
+    "code": 46554
+   },
+   {
+    "code": 53947
+   },
+   {
+    "code": 53456
+   },
+   {
+    "control": "enter"
+   },
+   {
+    "code": 46554
+   },
+   {
+    "code": 46846
+   },
+   {
+    "code": 53456
+   }
+  ]
+ },
+ {
+  "text": "第一行\n第二行",
+  "encoding": "unicode",
+  "items": [
+   {
+    "code": 31532
+   },
+   {
+    "code": 19968
+   },
+   {
+    "code": 34892
+   },
+   {
+    "control": "enter"
+   },
+   {
+    "code": 31532
+   },
+   {
+    "code": 20108
+   },
+   {
+    "code": 34892
+   }
+  ]
+ },
+ {
+  "text": "第一行\n第二行",
+  "encoding": "mdwin",
+  "items": [
+   {
+    "code": 30920
+   },
+   {
+    "code": 19940
+   },
+   {
+    "code": 35752
+   },
+   {
+    "control": "enter"
+   },
+   {
+    "code": 30920
+   },
+   {
+    "code": 19816
+   },
+   {
+    "code": 35752
+   }
+  ]
+ },
+ {
+  "text": "第一行\n第二行",
+  "encoding": "ascii",
+  "items": [
+   {
+    "control": "enter"
+   }
+  ]
+ },
+ {
+  "text": "第一行\n第二行",
+  "encoding": "base64",
+  "items": [
+   {
+    "code": 53
+   },
+   {
+    "code": 54
+   },
+   {
+    "code": 121
+   },
+   {
+    "code": 115
+   },
+   {
+    "code": 53
+   },
+   {
+    "code": 76
+   },
+   {
+    "code": 105
+   },
+   {
+    "code": 65
+   },
+   {
+    "code": 54
+   },
+   {
+    "code": 75
+   },
+   {
+    "code": 71
+   },
+   {
+    "code": 77
+   },
+   {
+    "code": 67
+   },
+   {
+    "code": 117
+   },
+   {
+    "code": 101
+   },
+   {
+    "code": 115
+   },
+   {
+    "code": 114
+   },
+   {
+    "code": 79
+   },
+   {
+    "code": 83
+   },
+   {
+    "code": 54
+   },
+   {
+    "code": 106
+   },
+   {
+    "code": 79
+   },
+   {
+    "code": 105
+   },
+   {
+    "code": 104
+   },
+   {
+    "code": 106
+   },
+   {
+    "code": 65
+   },
+   {
+    "code": 61
+   },
+   {
+    "code": 61
+   }
+  ]
+ },
+ {
+  "text": "CRLF\r\n换行",
+  "encoding": "gbk",
+  "items": [
+   {
+    "code": 67
+   },
+   {
+    "code": 82
+   },
+   {
+    "code": 76
+   },
+   {
+    "code": 70
+   },
+   {
+    "control": "enter"
+   },
+   {
+    "code": 48059
+   },
+   {
+    "code": 53456
+   }
+  ]
+ },
+ {
+  "text": "CRLF\r\n换行",
+  "encoding": "unicode",
+  "items": [
+   {
+    "code": 67
+   },
+   {
+    "code": 82
+   },
+   {
+    "code": 76
+   },
+   {
+    "code": 70
+   },
+   {
+    "control": "enter"
+   },
+   {
+    "code": 25442
+   },
+   {
+    "code": 34892
+   }
+  ]
+ },
+ {
+  "text": "CRLF\r\n换行",
+  "encoding": "mdwin",
+  "items": [
+   {
+    "code": 935
+   },
+   {
+    "code": 950
+   },
+   {
+    "code": 936
+   },
+   {
+    "code": 930
+   },
+   {
+    "control": "enter"
+   },
+   {
+    "code": 24710
+   },
+   {
+    "code": 35752
+   }
+  ]
+ },
+ {
+  "text": "CRLF\r\n换行",
+  "encoding": "ascii",
+  "items": [
+   {
+    "code": 67
+   },
+   {
+    "code": 82
+   },
+   {
+    "code": 76
+   },
+   {
+    "code": 70
+   },
+   {
+    "control": "enter"
+   }
+  ]
+ },
+ {
+  "text": "CRLF\r\n换行",
+  "encoding": "base64",
+  "items": [
+   {
+    "code": 81
+   },
+   {
+    "code": 49
+   },
+   {
+    "code": 74
+   },
+   {
+    "code": 77
+   },
+   {
+    "code": 82
+   },
+   {
+    "code": 103
+   },
+   {
+    "code": 48
+   },
+   {
+    "code": 75
+   },
+   {
+    "code": 53
+   },
+   {
+    "code": 111
+   },
+   {
+    "code": 50
+   },
+   {
+    "code": 105
+   },
+   {
+    "code": 54
+   },
+   {
+    "code": 75
+   },
+   {
+    "code": 71
+   },
+   {
+    "code": 77
+   }
+  ]
+ },
+ {
+  "text": "tab\there",
+  "encoding": "gbk",
+  "items": [
+   {
+    "code": 116
+   },
+   {
+    "code": 97
+   },
+   {
+    "code": 98
+   },
+   {
+    "control": "tab"
+   },
+   {
+    "code": 104
+   },
+   {
+    "code": 101
+   },
+   {
+    "code": 114
+   },
+   {
+    "code": 101
+   }
+  ]
+ },
+ {
+  "text": "tab\there",
+  "encoding": "unicode",
+  "items": [
+   {
+    "code": 116
+   },
+   {
+    "code": 97
+   },
+   {
+    "code": 98
+   },
+   {
+    "control": "tab"
+   },
+   {
+    "code": 104
+   },
+   {
+    "code": 101
+   },
+   {
+    "code": 114
+   },
+   {
+    "code": 101
+   }
+  ]
+ },
+ {
+  "text": "tab\there",
+  "encoding": "mdwin",
+  "items": [
+   {
+    "code": 912
+   },
+   {
+    "code": 901
+   },
+   {
+    "code": 902
+   },
+   {
+    "control": "tab"
+   },
+   {
+    "code": 908
+   },
+   {
+    "code": 897
+   },
+   {
+    "code": 918
+   },
+   {
+    "code": 897
+   }
+  ]
+ },
+ {
+  "text": "tab\there",
+  "encoding": "ascii",
+  "items": [
+   {
+    "code": 116
+   },
+   {
+    "code": 97
+   },
+   {
+    "code": 98
+   },
+   {
+    "control": "tab"
+   },
+   {
+    "code": 104
+   },
+   {
+    "code": 101
+   },
+   {
+    "code": 114
+   },
+   {
+    "code": 101
+   }
+  ]
+ },
+ {
+  "text": "tab\there",
+  "encoding": "base64",
+  "items": [
+   {
+    "code": 100
+   },
+   {
+    "code": 71
+   },
+   {
+    "code": 70
+   },
+   {
+    "code": 105
+   },
+   {
+    "code": 67
+   },
+   {
+    "code": 87
+   },
+   {
+    "code": 104
+   },
+   {
+    "code": 108
+   },
+   {
+    "code": 99
+   },
+   {
+    "code": 109
+   },
+   {
+    "code": 85
+   },
+   {
+    "code": 61
+   }
+  ]
+ },
+ {
+  "text": "😀 表情与代理对",
+  "encoding": "gbk",
+  "items": [
+   {
+    "code": 128512
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 45549
+   },
+   {
+    "code": 51177
+   },
+   {
+    "code": 54251
+   },
+   {
+    "code": 46330
+   },
+   {
+    "code": 49389
+   },
+   {
+    "code": 46804
+   }
+  ]
+ },
+ {
+  "text": "😀 表情与代理对",
+  "encoding": "unicode",
+  "items": [
+   {
+    "code": 128512
+   },
+   {
+    "control": "space"
+   },
+   {
+    "code": 34920
+   },
+   {
+    "code": 24773
+   },
+   {
+    "code": 19982
+   },
+   {
+    "code": 20195
+   },
+   {
+    "code": 29702
+   },
+   {
+    "code": 23545
+   }
+  ]
+ },
+ {
+  "text": "😀 表情与代理对",
+  "encoding": "mdwin",
+  "items": [
+   {
+    "code": 56281
+   },
+   {
+    "code": 56804
+   },
+   {
+    "code": 964
+   },
+   {
+    "code": 35724
+   },
+   {
+    "code": 25377
+   },
+   {
+    "code": 19946
+   },
+   {
+    "code": 19719
+   },
+   {
+    "code": 30690
+   },
+   {
+    "code": 22557
+   }
+  ]
+ },
+ {
+  "text": "😀 表情与代理对",
+  "encoding": "ascii",
+  "items": [
+   {
+    "control": "space"
+   }
+  ]
+ },
+ {
+  "text": "😀 表情与代理对",
+  "encoding": "base64",
+  "items": [
+   {
+    "code": 56
+   },
+   {
+    "code": 74
+   },
+   {
+    "code": 43
+   },
+   {
+    "code": 89
+   },
+   {
+    "code": 103
+   },
+   {
+    "code": 67
+   },
+   {
+    "code": 68
+   },
+   {
+    "code": 111
+   },
+   {
+    "code": 111
+   },
+   {
+    "code": 97
+   },
+   {
+    "code": 106
+   },
+   {
+    "code": 109
+   },
+   {
+    "code": 103
+   },
+   {
+    "code": 52
+   },
+   {
+    "code": 88
+   },
+   {
+    "code": 107
+   },
+   {
+    "code": 117
+   },
+   {
+    "code": 73
+   },
+   {
+    "code": 55
+   },
+   {
+    "code": 107
+   },
+   {
+    "code": 117
+   },
+   {
+    "code": 54
+   },
+   {
+    "code": 80
+   },
+   {
+    "code": 110
+   },
+   {
+    "code": 107
+   },
+   {
+    "code": 73
+   },
+   {
+    "code": 98
+   },
+   {
+    "code": 108
+   },
+   {
+    "code": 114
+   },
+   {
+    "code": 55
+   },
+   {
+    "code": 107
+   },
+   {
+    "code": 61
+   }
+  ]
+ },
+ {
+  "text": "ＡＢＣ全角",
+  "encoding": "gbk",
+  "items": [
+   {
+    "code": 41921
+   },
+   {
+    "code": 41922
+   },
+   {
+    "code": 41923
+   },
+   {
+    "code": 51371
+   },
+   {
+    "code": 48583
+   }
+  ]
+ },
+ {
+  "text": "ＡＢＣ全角",
+  "encoding": "unicode",
+  "items": [
+   {
+    "code": 65313
+   },
+   {
+    "code": 65314
+   },
+   {
+    "code": 65315
+   },
+   {
+    "code": 20840
+   },
+   {
+    "code": 35282
+   }
+  ]
+ },
+ {
+  "text": "ＡＢＣ全角",
+  "encoding": "mdwin",
+  "items": [
+   {
+    "code": 64709
+   },
+   {
+    "code": 64710
+   },
+   {
+    "code": 64711
+   },
+   {
+    "code": 21132
+   },
+   {
+    "code": 35382
+   }
+  ]
+ },
+ {
+  "text": "ＡＢＣ全角",
+  "encoding": "ascii",
+  "items": []
+ },
+ {
+  "text": "ＡＢＣ全角",
+  "encoding": "base64",
+  "items": [
+   {
+    "code": 55
+   },
+   {
+    "code": 55
+   },
+   {
+    "code": 121
+   },
+   {
+    "code": 104
+   },
+   {
+    "code": 55
+   },
+   {
+    "code": 55
+   },
+   {
+    "code": 121
+   },
+   {
+    "code": 105
+   },
+   {
+    "code": 55
+   },
+   {
+    "code": 55
+   },
+   {
+    "code": 121
+   },
+   {
+    "code": 106
+   },
+   {
+    "code": 53
+   },
+   {
+    "code": 89
+   },
+   {
+    "code": 87
+   },
+   {
+    "code": 111
+   },
+   {
+    "code": 54
+   },
+   {
+    "code": 75
+   },
+   {
+    "code": 101
+   },
+   {
+    "code": 83
+   }
+  ]
+ },
+ {
+  "text": "[]{}<>()!@#$%^&*",
+  "encoding": "gbk",
+  "items": [
+   {
+    "code": 91
+   },
+   {
+    "code": 93
+   },
+   {
+    "code": 123
+   },
+   {
+    "code": 125
+   },
+   {
+    "code": 60
+   },
+   {
+    "code": 62
+   },
+   {
+    "code": 40
+   },
+   {
+    "code": 41
+   },
+   {
+    "code": 33
+   },
+   {
+    "code": 64
+   },
+   {
+    "code": 35
+   },
+   {
+    "code": 36
+   },
+   {
+    "code": 37
+   },
+   {
+    "code": 94
+   },
+   {
+    "code": 38
+   },
+   {
+    "code": 42
+   }
+  ]
+ },
+ {
+  "text": "[]{}<>()!@#$%^&*",
+  "encoding": "unicode",
+  "items": [
+   {
+    "code": 91
+   },
+   {
+    "code": 93
+   },
+   {
+    "code": 123
+   },
+   {
+    "code": 125
+   },
+   {
+    "code": 60
+   },
+   {
+    "code": 62
+   },
+   {
+    "code": 40
+   },
+   {
+    "code": 41
+   },
+   {
+    "code": 33
+   },
+   {
+    "code": 64
+   },
+   {
+    "code": 35
+   },
+   {
+    "code": 36
+   },
+   {
+    "code": 37
+   },
+   {
+    "code": 94
+   },
+   {
+    "code": 38
+   },
+   {
+    "code": 42
+   }
+  ]
+ },
+ {
+  "text": "[]{}<>()!@#$%^&*",
+  "encoding": "mdwin",
+  "items": [
+   {
+    "code": 959
+   },
+   {
+    "code": 953
+   },
+   {
+    "code": 927
+   },
+   {
+    "code": 921
+   },
+   {
+    "code": 984
+   },
+   {
+    "code": 986
+   },
+   {
+    "code": 972
+   },
+   {
+    "code": 973
+   },
+   {
+    "code": 965
+   },
+   {
+    "code": 932
+   },
+   {
+    "code": 967
+   },
+   {
+    "code": 960
+   },
+   {
+    "code": 961
+   },
+   {
+    "code": 954
+   },
+   {
+    "code": 962
+   },
+   {
+    "code": 974
+   }
+  ]
+ },
+ {
+  "text": "[]{}<>()!@#$%^&*",
+  "encoding": "ascii",
+  "items": []
+ },
+ {
+  "text": "[]{}<>()!@#$%^&*",
+  "encoding": "base64",
+  "items": [
+   {
+    "code": 87
+   },
+   {
+    "code": 49
+   },
+   {
+    "code": 49
+   },
+   {
+    "code": 55
+   },
+   {
+    "code": 102
+   },
+   {
+    "code": 84
+   },
+   {
+    "code": 119
+   },
+   {
+    "code": 43
+   },
+   {
+    "code": 75
+   },
+   {
+    "code": 67
+   },
+   {
+    "code": 107
+   },
+   {
+    "code": 104
+   },
+   {
+    "code": 81
+   },
+   {
+    "code": 67
+   },
+   {
+    "code": 77
+   },
+   {
+    "code": 107
+   },
+   {
+    "code": 74
+   },
+   {
+    "code": 86
+   },
+   {
+    "code": 52
+   },
+   {
+    "code": 109
+   },
+   {
+    "code": 75
+   },
+   {
+    "code": 103
+   },
+   {
+    "code": 61
+   },
+   {
+    "code": 61
+   }
+  ]
+ },
+ {
+  "text": "多行\n文本\t结束\n",
+  "encoding": "gbk",
+  "items": [
+   {
+    "code": 46816
+   },
+   {
+    "code": 53456
+   },
+   {
+    "control": "enter"
+   },
+   {
+    "code": 52932
+   },
+   {
+    "code": 45502
+   },
+   {
+    "control": "tab"
+   },
+   {
+    "code": 48609
+   },
+   {
+    "code": 51960
+   },
+   {
+    "control": "enter"
+   }
+  ]
+ },
+ {
+  "text": "多行\n文本\t结束\n",
+  "encoding": "unicode",
+  "items": [
+   {
+    "code": 22810
+   },
+   {
+    "code": 34892
+   },
+   {
+    "control": "enter"
+   },
+   {
+    "code": 25991
+   },
+   {
+    "code": 26412
+   },
+   {
+    "control": "tab"
+   },
+   {
+    "code": 32467
+   },
+   {
+    "code": 26463
+   },
+   {
+    "control": "enter"
+   }
+  ]
+ },
+ {
+  "text": "多行\n文本\t结束\n",
+  "encoding": "mdwin",
+  "items": [
+   {
+    "code": 23294
+   },
+   {
+    "code": 35752
+   },
+   {
+    "control": "enter"
+   },
+   {
+    "code": 26211
+   },
+   {
+    "code": 25800
+   },
+   {
+    "control": "tab"
+   },
+   {
+    "code": 32055
+   },
+   {
+    "code": 25787
+   },
+   {
+    "control": "enter"
+   }
+  ]
+ },
+ {
+  "text": "多行\n文本\t结束\n",
+  "encoding": "ascii",
+  "items": [
+   {
+    "control": "enter"
+   },
+   {
+    "control": "tab"
+   },
+   {
+    "control": "enter"
+   }
+  ]
+ },
+ {
+  "text": "多行\n文本\t结束\n",
+  "encoding": "base64",
+  "items": [
+   {
+    "code": 53
+   },
+   {
+    "code": 97
+   },
+   {
+    "code": 83
+   },
+   {
+    "code": 97
+   },
+   {
+    "code": 54
+   },
+   {
+    "code": 75
+   },
+   {
+    "code": 71
+   },
+   {
+    "code": 77
+   },
+   {
+    "code": 67
+   },
+   {
+    "code": 117
+   },
+   {
+    "code": 97
+   },
+   {
+    "code": 87
+   },
+   {
+    "code": 104
+   },
+   {
+    "code": 43
+   },
+   {
+    "code": 97
+   },
+   {
+    "code": 99
+   },
+   {
+    "code": 114
+   },
+   {
+    "code": 65
+   },
+   {
+    "code": 110
+   },
+   {
+    "code": 110
+   },
+   {
+    "code": 117
+   },
+   {
+    "code": 53
+   },
+   {
+    "code": 80
+   },
+   {
+    "code": 109
+   },
+   {
+    "code": 110
+   },
+   {
+    "code": 90
+   },
+   {
+    "code": 56
+   },
+   {
+    "code": 75
+   }
+  ]
+ }
+]

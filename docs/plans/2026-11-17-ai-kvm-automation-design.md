@@ -79,3 +79,28 @@ PC 侧维护光标位置：序列首个鼠标动作前 rehome（多次 `mmove -1
 4. 8848 打字中 :8849 返回 409，反之亦然。
 5. `node tests/encoding.test.cjs`、`python3 tests/native_controls.py`、
    `python3 tests/native_seq_protocol.py`、`python3 -m pytest mcp-server/tests` 全过。
+
+## 实现状态（2026-11-17）
+
+已完成并可在无硬件环境验证的部分：
+
+- `native/capture.c`：V4L2 单帧 + MJPEG 直通 + YUYV→libjpeg-turbo；`--probe`
+  无设备时输出 `[]` 且退出码 0；`--selftest` 生成 640×360 渐变 JPEG 验证编码
+  路径（含 `--meta` 元数据）。
+- `native/seq_writer.c`：全部行协议指令、stop/pause/progress/step/error 文件；
+  `tests/native_seq_protocol.py` 5 项通过（全协议、暂停恢复、停止、未知指令、
+  绝对模式拒绝）。
+- `automation_server.sh`：`/health` `/capture` `/seq` `/stop` `/abort` `/probe`
+  在本机以 `/dev/null` 伪设备验证；`/capture` 二进制正文与 `X-Frame-*` 头正确；
+  打字机忙时 `/seq` 返回 409。
+- `server.sh`：新增 4 行跨通道检查；`node tests/encoding.test.cjs` 16 项仍通过；
+  自动化通道忙时 `/api/type` 拒绝。
+- `mcp-server/`：编码 parity（65 条 fixtures，覆盖 5 种编码 × 13 组文本）、
+  动作翻译、鼠标分段、HTTP 客户端共 36 项单测通过。
+
+待真机验收（需要 Luckfox 设备）：
+
+- M0 `probe_device.sh` 实测：`/dev/video*` 格式、鼠标 gadget 与报告长度。
+- M1 实拍 JPEG 可打开；M3/M4 真机组合键、打字、点击、拖拽、滚轮。
+- M6 端到端：截屏 → 批量填表 → 截屏验证。
+
