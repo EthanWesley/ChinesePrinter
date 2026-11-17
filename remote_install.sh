@@ -58,7 +58,7 @@ printf "${CYAN}  ChinesePrinter 远程安装/更新${NC}\n"
 printf "  来源: GitHub ${GITHUB_USER}/${GITHUB_REPO} (分支: ${GITHUB_BRANCH})\n"
 [ -n "$MIRROR" ] && printf "  加速: ${MIRROR}\n"
 # 预检测是否已安装
-if [ -d "/opt/chinese-printer" ] && [ -f "/opt/chinese-printer/app.py" ]; then
+if [ -d "/opt/chinese-printer" ] && [ -f "/opt/chinese-printer/server.sh" ]; then
     printf "  模式: ${YELLOW}更新现有安装${NC}\n"
 else
     printf "  模式: ${CYAN}全新安装${NC}\n"
