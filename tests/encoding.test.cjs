@@ -1,7 +1,7 @@
 const assert = require('assert').strict;
 const {readFileSync, writeFileSync, mkdirSync, mkdtempSync, existsSync} = require('fs');
 const path = require('path');
-const {spawnSync} = require('child_process');
+const {spawnSync, spawn} = require('child_process');
 const vm = require('vm');
 const {Worker: NodeWorker} = require('worker_threads');
 const tests = [];
@@ -16,6 +16,20 @@ const context = vm.createContext({
 });
 vm.runInContext(encodingScript, context);
 const convert = (text, encoding) => JSON.parse(JSON.stringify(context.textToAltSequence(text, encoding)));
+
+// spawnSync 在部分 POSIX 环境下会在直接子进程退出时清理整个进程组，
+// 导致 server.sh 启动的后台打字任务被误杀。异步 spawn 只等待该子进程本身。
+const runHandle = (shell, args, env, input, timeoutMs = 15000) => new Promise((resolve, reject) => {
+  const child = spawn(shell, args, {env});
+  let stdout = '';
+  let stderr = '';
+  const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
+  child.stdout.on('data', chunk => { stdout += chunk; });
+  child.stderr.on('data', chunk => { stderr += chunk; });
+  child.on('error', error => { clearTimeout(timer); reject(error); });
+  child.on('close', status => { clearTimeout(timer); resolve({status, stdout, stderr}); });
+  child.stdin.end(input);
+});
 
 // Execute the browser's actual Blob worker source in a separate Node thread.
 const blobs = new Map();
@@ -302,7 +316,7 @@ hid_type_control_char() { printf 'control %s\\n' "$1" >> "$STATE_DIR/written"; s
   const body = JSON.stringify({encoding: 'mdwin', mode: 'shell', items: convert('中\nA', 'mdwin')});
   const request = `POST /api/type HTTP/1.1\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
   const shell = process.platform === 'win32' ? process.env.TEST_BASH || 'C:/Program Files/Git/bin/bash.exe' : 'sh';
-  const result = spawnSync(shell, [posix(path.join(dir, 'server.sh')), 'handle'], {env, input: request, encoding: 'utf8', timeout: 10000});
+  const result = await runHandle(shell, [posix(path.join(dir, 'server.sh')), 'handle'], env, request, 10000);
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
   const response = JSON.parse(result.stdout.split('\r\n\r\n')[1]);
@@ -337,7 +351,7 @@ test('HTTP handler reads a long worker request completely for the native engine'
   const prepared = await context.prepareTypingRequest('中\nA'.repeat(10000), 'mdwin', 'native', 5);
   const request = `POST /api/type HTTP/1.1\r\nContent-Length: ${Buffer.byteLength(prepared.body)}\r\n\r\n${prepared.body}`;
   const shell = process.platform === 'win32' ? process.env.TEST_BASH || 'C:/Program Files/Git/bin/bash.exe' : 'sh';
-  const result = spawnSync(shell, [posix(path.join(dir, 'server.sh')), 'handle'], {env, input: request, encoding: 'utf8', timeout: 15000});
+  const result = await runHandle(shell, [posix(path.join(dir, 'server.sh')), 'handle'], env, request, 15000);
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
   const response = JSON.parse(result.stdout.split('\r\n\r\n')[1]);
@@ -374,30 +388,30 @@ hid_type_control_char() { printf 'control %s\\n' "$1" >> "$STATE_DIR/written"; s
   const env = {...process.env, INSTALL_DIR: posix(dir), STATE_DIR: posix(path.join(dir, 'state')),
     HID_DEVICE: posix(path.join(dir, 'fake-hid')), LOG_FILE: posix(path.join(dir, 'log')), TYPE_MODE: 'shell'};
   const shell = process.platform === 'win32' ? process.env.TEST_BASH || 'C:/Program Files/Git/bin/bash.exe' : 'sh';
-  const request = (url, body) => {
+  const request = async (url, body) => {
     const content = body ? JSON.stringify(body) : '';
     const raw = `${body ? 'POST' : url === '/api/health' ? 'GET' : 'POST'} ${url} HTTP/1.1\r\nContent-Length: ${Buffer.byteLength(content)}\r\n\r\n${content}`;
-    const result = spawnSync(shell, [posix(path.join(dir, 'server.sh')), 'handle'], {env, input: raw, encoding: 'utf8', timeout: 10000});
+    const result = await runHandle(shell, [posix(path.join(dir, 'server.sh')), 'handle'], env, raw, 10000);
     assert.ifError(result.error);
     assert.equal(result.status, 0, result.stderr);
     return JSON.parse(result.stdout.split('\r\n\r\n')[1]);
   };
   const written = () => existsSync(path.join(dir, 'state/written')) ? readFileSync(path.join(dir, 'state/written'), 'utf8') : '';
-  assert.equal(request('/api/type', {encoding: 'mdwin', items: Array.from({length: 40}, (_, i) => ({code: 933 + i})), mode: 'shell'}).ok, true);
+  assert.equal((await request('/api/type', {encoding: 'mdwin', items: Array.from({length: 40}, (_, i) => ({code: 933 + i})), mode: 'shell'})).ok, true);
   try {
     await new Promise(resolve => setTimeout(resolve, 100));
-    assert.equal(request('/api/pause').ok, true);
+    assert.equal((await request('/api/pause')).ok, true);
     await new Promise(resolve => setTimeout(resolve, 120));
     const pausedText = written();
-    const health = request('/api/health');
+    const health = await request('/api/health');
     assert.equal(health.busy, true);
     assert.equal(health.paused, true);
     await new Promise(resolve => setTimeout(resolve, 150));
     assert.equal(written(), pausedText);
-    assert.equal(request('/api/resume').ok, true);
+    assert.equal((await request('/api/resume')).ok, true);
     await new Promise(resolve => setTimeout(resolve, 150));
     assert.ok(written().length > pausedText.length);
-    assert.equal(request('/api/stop').ok, true);
+    assert.equal((await request('/api/stop')).ok, true);
     const deadline = Date.now() + 10000;
     const statusFile = path.join(dir, 'state/status.json');
     while (JSON.parse(readFileSync(statusFile, 'utf8')).busy && Date.now() < deadline) {
@@ -408,7 +422,7 @@ hid_type_control_char() { printf 'control %s\\n' "$1" >> "$STATE_DIR/written"; s
     assert.ok(lines.length < 40);
     assert.deepEqual(lines, Array.from({length: lines.length}, (_, i) => 'code ' + (933 + i)));
   } finally {
-    request('/api/stop');
+    await request('/api/stop');
   }
 });
 

@@ -8,11 +8,14 @@
  *      SOI(FFD8)..EOI(FFD9) 直通，不解码、不缩放、不重编码（弱 CPU 最快路径）。
  *   2. 回退 YUYV：libjpeg-turbo 以 4:2:2 原始数据直接编码
  *      （jpeg_write_raw_data，跳过 RGB 转换）。需 -DHAVE_LIBJPEG 编译。
+ *   3. Luckfox Pico KVM 真机使用 Rockchip rkcif/rkisp 的 V4L2 MPLANE 节点，
+ *      因此同时支持 V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE，并可处理
+ *      NV16 / NV12 半平面格式（先转 YUYV 再编码）。
  *
  * 用法：
  *   capture --output /tmp/frame.jpg [--device /dev/video0] [--warmup 3]
- *           [--quality 85] [--timeout 5000]
- *   capture --probe            # 枚举 /dev/video0..3 的能力，输出 JSON
+ *           [--quality 85] [--timeout 5000] [--probe] [--selftest]
+ *   capture --probe            # 枚举 /dev/video0..23 的能力，输出 JSON
  *
  * 编译（WSL 交叉编译，见 native/build.sh）：
  *   arm-linux-gnueabihf-gcc -static -O2 -s -o capture capture.c libjpeg.a -DHAVE_LIBJPEG
@@ -40,8 +43,9 @@
 #define DEFAULT_OUT "/tmp/chinese-printer/auto_frame.jpg"
 
 struct buffer {
-    void *start;
-    size_t length;
+    void *start[VIDEO_MAX_PLANES];
+    size_t length[VIDEO_MAX_PLANES];
+    unsigned int nplanes;
 };
 
 static int xioctl(int fd, unsigned long req, void *arg) {
@@ -77,9 +81,28 @@ static int open_capture(const char *dev, int verbose) {
     return fd;
 }
 
+/* Rockchip CSI/ISP 节点只暴露 MPLANE 能力；用它选择正确的数据路径 */
+static int device_is_mplane(int fd) {
+    struct v4l2_capability cap;
+    memset(&cap, 0, sizeof(cap));
+    if (xioctl(fd, VIDIOC_QUERYCAP, &cap) < 0) return 0;
+    if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE_MPLANE)) return 0;
+    if (cap.capabilities & V4L2_CAP_VIDEO_CAPTURE) return 0;
+    return 1;
+}
+
+/* fourcc 转可读字符串（调用方提供至少 5 字节） */
+static void fourcc_str(unsigned int fourcc, char out[5]) {
+    out[0] = (char)(fourcc & 0xff);
+    out[1] = (char)((fourcc >> 8) & 0xff);
+    out[2] = (char)((fourcc >> 16) & 0xff);
+    out[3] = (char)((fourcc >> 24) & 0xff);
+    out[4] = 0;
+}
+
 /* 自动探测第一个可用的采集设备 */
 static int find_device(char *out, size_t n) {
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 24; i++) {
         snprintf(out, n, "/dev/video%d", i);
         int fd = open_capture(out, 0);
         if (fd >= 0) { close(fd); return 0; }
@@ -99,6 +122,26 @@ static int try_format(int fd, unsigned int pixfmt, int *w, int *h) {
     if (fmt.fmt.pix.pixelformat != pixfmt) return -1;  /* 驱动拒绝，回落 */
     *w = (int)fmt.fmt.pix.width;
     *h = (int)fmt.fmt.pix.height;
+    return 0;
+}
+
+/* MPLANE 版请求指定像素格式，返回实际生效的宽高；失败返回 -1 */
+static int try_format_mplane(int fd, unsigned int pixfmt, int *w, int *h) {
+    struct v4l2_format fmt;
+    memset(&fmt, 0, sizeof(fmt));
+    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+    if (xioctl(fd, VIDIOC_G_FMT, &fmt) < 0 ||
+        fmt.fmt.pix_mp.width == 0 || fmt.fmt.pix_mp.height == 0) {
+        fmt.fmt.pix_mp.width = 640;
+        fmt.fmt.pix_mp.height = 480;
+    }
+    fmt.fmt.pix_mp.pixelformat = pixfmt;
+    fmt.fmt.pix_mp.field = V4L2_FIELD_ANY;
+    fmt.fmt.pix_mp.num_planes = 1;
+    if (xioctl(fd, VIDIOC_S_FMT, &fmt) < 0) return -1;
+    if (fmt.fmt.pix_mp.pixelformat != pixfmt) return -1;
+    *w = (int)fmt.fmt.pix_mp.width;
+    *h = (int)fmt.fmt.pix_mp.height;
     return 0;
 }
 
@@ -195,12 +238,54 @@ static int encode_yuyv(const unsigned char *src, int w, int h, int quality,
     fclose(fp);
     return 0;
 }
+
+/* NV12: Y 平面 w*h，随后 CbCr 交错平面 w*h/2（色度 2x2 共用） */
+static int nv12_to_yuyv(const unsigned char *y, const unsigned char *uv,
+                        int w, int h, unsigned char *out) {
+    if (w <= 0 || h <= 0 || (w & 1) || (h & 1)) return -1;
+    for (int j = 0; j < h; j += 2) {
+        for (int i = 0; i < w; i += 2) {
+            size_t y00 = (size_t)j * w + i;
+            size_t y01 = y00 + 1;
+            size_t y10 = y00 + w;
+            size_t y11 = y10 + 1;
+            size_t uvoff = ((size_t)(j / 2) * w) + i;
+            unsigned char cb = uv[uvoff];
+            unsigned char cr = uv[uvoff + 1];
+            size_t o = (y00 * 2);
+            out[o]     = y[y00]; out[o + 1] = cb;
+            out[o + 2] = y[y01]; out[o + 3] = cr;
+            o = (y10 * 2);
+            out[o]     = y[y10]; out[o + 1] = cb;
+            out[o + 2] = y[y11]; out[o + 3] = cr;
+        }
+    }
+    return 0;
+}
+
+/* NV16: Y 平面 w*h，随后 CbCr 交错平面 w*h（每行色度不共用） */
+static int nv16_to_yuyv(const unsigned char *y, const unsigned char *uv,
+                        int w, int h, unsigned char *out) {
+    if (w <= 0 || h <= 0 || (w & 1)) return -1;
+    for (int j = 0; j < h; j++) {
+        for (int i = 0; i < w; i += 2) {
+            size_t p = (size_t)j * (w / 2) + i / 2;
+            size_t o = ((size_t)j * w + i) * 2;
+            out[o]     = y[(size_t)j * w + i];
+            out[o + 1] = uv[p * 2];
+            out[o + 2] = y[(size_t)j * w + i + 1];
+            out[o + 3] = uv[p * 2 + 1];
+        }
+    }
+    return 0;
+}
 #endif
 
 struct frame_info {
     int width;
     int height;
     int mjpeg;
+    char format[8];
 };
 
 /* 抓取一帧：返回 0 成功（JPEG 已写入 out_path） */
@@ -222,6 +307,7 @@ static int grab_frame(int fd, const char *out_path,
         info->width = w;
         info->height = h;
         info->mjpeg = is_mjpeg;
+        strcpy(info->format, is_mjpeg ? "MJPEG" : "YUYV");
     }
     if (verbose)
         fprintf(stderr, "capture: 格式 %s %dx%d\n", is_mjpeg ? "MJPEG" : "YUYV", w, h);
@@ -249,10 +335,11 @@ static int grab_frame(int fd, const char *out_path,
             perror("VIDIOC_QUERYBUF");
             return -1;
         }
-        bufs[i].length = b.length;
-        bufs[i].start = mmap(NULL, b.length, PROT_READ | PROT_WRITE,
-                             MAP_SHARED, fd, b.m.offset);
-        if (bufs[i].start == MAP_FAILED) {
+        bufs[i].nplanes = 1;
+        bufs[i].length[0] = b.length;
+        bufs[i].start[0] = mmap(NULL, b.length, PROT_READ | PROT_WRITE,
+                                MAP_SHARED, fd, b.m.offset);
+        if (bufs[i].start[0] == MAP_FAILED) {
             perror("mmap");
             return -1;
         }
@@ -298,14 +385,14 @@ static int grab_frame(int fd, const char *out_path,
         }
 
         if (i == need - 1) {
-            frame = (unsigned char *)bufs[b.index].start;
+            frame = (unsigned char *)bufs[b.index].start[0];
             frame_len = b.bytesused;
-        }
-        if (xioctl(fd, VIDIOC_QBUF, &b) < 0) {
+            /* 最后一帧不再入队，避免 Rockchip vb2 在 STREAMOFF 时等待该 buffer */
+            rc = 0;
+        } else if (xioctl(fd, VIDIOC_QBUF, &b) < 0) {
             perror("VIDIOC_QBUF");
             break;
         }
-        if (i == need - 1) rc = 0;
     }
 
     if (rc == 0 && frame && frame_len > 0) {
@@ -340,10 +427,251 @@ static int grab_frame(int fd, const char *out_path,
     }
 
     xioctl(fd, VIDIOC_STREAMOFF, &type);
-    for (unsigned int i = 0; i < nbuf; i++) {
-        if (bufs[i].start && bufs[i].start != MAP_FAILED)
-            munmap(bufs[i].start, bufs[i].length);
+    {
+        struct v4l2_requestbuffers rel;
+        memset(&rel, 0, sizeof(rel));
+        rel.count = 0;
+        rel.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        rel.memory = V4L2_MEMORY_MMAP;
+        xioctl(fd, VIDIOC_REQBUFS, &rel);
     }
+    for (unsigned int i = 0; i < nbuf; i++) {
+        for (unsigned int p = 0; p < bufs[i].nplanes; p++) {
+            if (bufs[i].start[p] && bufs[i].start[p] != MAP_FAILED)
+                munmap(bufs[i].start[p], bufs[i].length[p]);
+        }
+    }
+    return rc;
+}
+
+/* Rockchip rkcif/rkisp 的 MPLANE 抓帧路径 */
+static int grab_frame_mplane(int fd, const char *out_path,
+                             int warmup, int quality, int timeout_ms, int verbose,
+                             struct frame_info *info) {
+    int w = 0, h = 0;
+    unsigned int pixfmt = 0;
+    const char *fmt_name = NULL;
+    char fmt_buf[8] = "";
+    /* rkcif 会“接受”MJPEG 请求却不出帧；按枚举结果优先使用原生 YUYV */
+    unsigned int candidates[] = {
+        V4L2_PIX_FMT_YUYV, V4L2_PIX_FMT_NV16, V4L2_PIX_FMT_NV12, 0
+    };
+
+    for (int i = 0; candidates[i]; i++) {
+        if (try_format_mplane(fd, candidates[i], &w, &h) == 0) {
+            pixfmt = candidates[i];
+            char fc[5];
+            fourcc_str(pixfmt, fc);
+            snprintf(fmt_buf, sizeof(fmt_buf), "%s",
+                     (pixfmt == V4L2_PIX_FMT_MJPEG) ? "MJPEG" :
+                     (pixfmt == V4L2_PIX_FMT_YUYV) ? "YUYV" : fc);
+            fmt_name = fmt_buf;
+            break;
+        }
+    }
+    if (!pixfmt) {
+        fprintf(stderr, "capture: MPLANE 设备不支持 MJPEG/YUYV/NV16/NV12\n");
+        return -1;
+    }
+    if (info) {
+        info->width = w;
+        info->height = h;
+        info->mjpeg = (pixfmt == V4L2_PIX_FMT_MJPEG);
+        strncpy(info->format, fmt_name, sizeof(info->format) - 1);
+        info->format[sizeof(info->format) - 1] = 0;
+    }
+    if (verbose)
+        fprintf(stderr, "capture: MPLANE 格式 %s %dx%d\n", fmt_name, w, h);
+
+    enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+
+    struct v4l2_requestbuffers req;
+    memset(&req, 0, sizeof(req));
+    req.count = MAX_BUFFERS;
+    req.type = type;
+    req.memory = V4L2_MEMORY_MMAP;
+    if (xioctl(fd, VIDIOC_REQBUFS, &req) < 0 || req.count < 1) {
+        perror("VIDIOC_REQBUFS(MPLANE)");
+        return -1;
+    }
+
+    struct buffer bufs[MAX_BUFFERS];
+    memset(bufs, 0, sizeof(bufs));
+    unsigned int nbuf = req.count > MAX_BUFFERS ? MAX_BUFFERS : req.count;
+
+    for (unsigned int i = 0; i < nbuf; i++) {
+        struct v4l2_plane planes[VIDEO_MAX_PLANES];
+        struct v4l2_buffer b;
+        memset(planes, 0, sizeof(planes));
+        memset(&b, 0, sizeof(b));
+        b.type = type;
+        b.memory = V4L2_MEMORY_MMAP;
+        b.index = i;
+        b.length = VIDEO_MAX_PLANES;
+        b.m.planes = planes;
+        if (xioctl(fd, VIDIOC_QUERYBUF, &b) < 0) {
+            perror("VIDIOC_QUERYBUF(MPLANE)");
+            return -1;
+        }
+        if (b.length < 1 || b.length > VIDEO_MAX_PLANES) {
+            fprintf(stderr, "capture: 非法 plane 数 %u\n", b.length);
+            return -1;
+        }
+        bufs[i].nplanes = b.length;
+        for (unsigned int p = 0; p < b.length; p++) {
+            bufs[i].length[p] = planes[p].length;
+            bufs[i].start[p] = mmap(NULL, planes[p].length, PROT_READ | PROT_WRITE,
+                                    MAP_SHARED, fd, planes[p].m.mem_offset);
+            if (bufs[i].start[p] == MAP_FAILED) {
+                perror("mmap(MPLANE)");
+                return -1;
+            }
+        }
+        b.length = bufs[i].nplanes;
+        if (xioctl(fd, VIDIOC_QBUF, &b) < 0) {
+            perror("VIDIOC_QBUF(MPLANE)");
+            return -1;
+        }
+    }
+
+    if (verbose) fprintf(stderr, "capture: stage=streamon(MPLANE)\n");
+    if (xioctl(fd, VIDIOC_STREAMON, &type) < 0) {
+        perror("VIDIOC_STREAMON(MPLANE)");
+        return -1;
+    }
+    if (verbose) fprintf(stderr, "capture: stage=streamon(MPLANE) ok\n");
+
+    int need = warmup > 0 ? warmup + 1 : 1;
+    unsigned char *plane[VIDEO_MAX_PLANES];
+    size_t plane_len[VIDEO_MAX_PLANES];
+    unsigned int nplane = 0;
+    int rc = -1;
+
+    memset(plane, 0, sizeof(plane));
+    memset(plane_len, 0, sizeof(plane_len));
+
+    for (int i = 0; i < need; i++) {
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(fd, &fds);
+        struct timeval tv;
+        tv.tv_sec = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+        int r = select(fd + 1, &fds, NULL, NULL, &tv);
+        if (r <= 0) {
+            fprintf(stderr, "capture: 等待 MPLANE 帧超时 (%d ms)\n", timeout_ms);
+            break;
+        }
+
+        struct v4l2_plane planes[VIDEO_MAX_PLANES];
+        struct v4l2_buffer b;
+        memset(planes, 0, sizeof(planes));
+        memset(&b, 0, sizeof(b));
+        b.type = type;
+        b.memory = V4L2_MEMORY_MMAP;
+        b.length = VIDEO_MAX_PLANES;
+        b.m.planes = planes;
+        if (xioctl(fd, VIDIOC_DQBUF, &b) < 0) {
+            if (errno == EAGAIN) { i--; continue; }
+            perror("VIDIOC_DQBUF(MPLANE)");
+            break;
+        }
+        if (b.index >= nbuf) {
+            fprintf(stderr, "capture: 非法 buffer index %u\n", b.index);
+            xioctl(fd, VIDIOC_QBUF, &b);
+            break;
+        }
+
+        if (i == need - 1) {
+            nplane = b.length;
+            if (nplane > VIDEO_MAX_PLANES) nplane = VIDEO_MAX_PLANES;
+            for (unsigned int p = 0; p < nplane; p++) {
+                plane[p] = (unsigned char *)bufs[b.index].start[p];
+                plane_len[p] = planes[p].bytesused;
+                if (!plane_len[p]) plane_len[p] = bufs[b.index].length[p];
+            }
+        }
+        if (i == need - 1) {
+            /* 最后一帧不再入队，避免 Rockchip vb2 在 STREAMOFF 时等待该 buffer */
+            rc = 0;
+        } else if (xioctl(fd, VIDIOC_QBUF, &b) < 0) {
+            perror("VIDIOC_QBUF(MPLANE)");
+            break;
+        }
+    }
+
+    if (rc == 0 && plane[0] && plane_len[0] > 0) {
+        if (pixfmt == V4L2_PIX_FMT_MJPEG) {
+            size_t n = trim_jpeg(plane[0], plane_len[0]);
+            if (n == 0) {
+                fprintf(stderr, "capture: MJPEG 帧缺少 SOI/EOI\n");
+                rc = -1;
+            } else {
+                FILE *fp = fopen(out_path, "wb");
+                if (!fp) { perror("fopen"); rc = -1; }
+                else {
+                    if (fwrite(plane[0], 1, n, fp) != n) { perror("fwrite"); rc = -1; }
+                    fclose(fp);
+                    if (verbose)
+                        fprintf(stderr, "capture: 写出 %zu 字节 (MJPEG 直通)\n", n);
+                }
+            }
+        }
+#ifdef HAVE_LIBJPEG
+        else {
+            unsigned char *yuyv = plane[0];
+            if (pixfmt == V4L2_PIX_FMT_NV16 || pixfmt == V4L2_PIX_FMT_NV12) {
+                if (nplane < 2 || !plane[1]) {
+                    fprintf(stderr, "capture: %s 缺少第二个平面\n", fmt_name);
+                    rc = -1;
+                } else {
+                    yuyv = malloc((size_t)w * h * 2);
+                    if (!yuyv) {
+                        fprintf(stderr, "capture: 分配 YUYV 缓冲失败\n");
+                        rc = -1;
+                    } else if (pixfmt == V4L2_PIX_FMT_NV16) {
+                        rc = nv16_to_yuyv(plane[0], plane[1], w, h, yuyv);
+                    } else {
+                        rc = nv12_to_yuyv(plane[0], plane[1], w, h, yuyv);
+                    }
+                }
+            }
+            if (rc == 0 && encode_yuyv(yuyv, w, h, quality, out_path) == 0) {
+                if (verbose)
+                    fprintf(stderr, "capture: 写出 %s (%s→JPEG q=%d)\n",
+                            out_path, fmt_name, quality);
+            } else {
+                rc = -1;
+            }
+            if (yuyv && yuyv != plane[0]) free(yuyv);
+        }
+#else
+        else {
+            fprintf(stderr, "capture: 非 MJPEG 格式需要 libjpeg 支持\n");
+            rc = -1;
+        }
+#endif
+    }
+
+    if (verbose) fprintf(stderr, "capture: stage=streamoff(MPLANE) rc=%d\n", rc);
+    xioctl(fd, VIDIOC_STREAMOFF, &type);
+    if (verbose) fprintf(stderr, "capture: stage=streamoff(MPLANE) ok\n");
+    {
+        struct v4l2_requestbuffers rel;
+        memset(&rel, 0, sizeof(rel));
+        rel.count = 0;
+        rel.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+        rel.memory = V4L2_MEMORY_MMAP;
+        xioctl(fd, VIDIOC_REQBUFS, &rel);
+        if (verbose) fprintf(stderr, "capture: stage=reqbufs0(MPLANE) ok\n");
+    }
+    for (unsigned int i = 0; i < nbuf; i++) {
+        for (unsigned int p = 0; p < bufs[i].nplanes; p++) {
+            if (bufs[i].start[p] && bufs[i].start[p] != MAP_FAILED)
+                munmap(bufs[i].start[p], bufs[i].length[p]);
+        }
+    }
+    if (verbose) fprintf(stderr, "capture: stage=munmap(MPLANE) ok\n");
     return rc;
 }
 
@@ -382,7 +710,8 @@ static void write_meta(const char *path, const struct frame_info *fi,
     fprintf(f,
             "{\"ok\":true,\"format\":\"%s\",\"width\":%d,\"height\":%d,"
             "\"bytes\":%ld,\"elapsed_ms\":%ld}\n",
-            fi->mjpeg ? "MJPEG" : "YUYV", fi->width, fi->height, size, elapsed_ms);
+            (fi->format[0] ? fi->format : (fi->mjpeg ? "MJPEG" : "YUYV")),
+            fi->width, fi->height, size, elapsed_ms);
     fclose(f);
 }
 
@@ -396,11 +725,11 @@ static void json_put(const char *s) {
     }
 }
 
-/* 枚举设备与格式，输出 JSON 数组 */
+/* 枚举设备与格式，输出 JSON 数组（同时兼容单平面与 MPLANE） */
 static void probe(void) {
     int first_dev = 1;
     printf("[");
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 24; i++) {
         char dev[32];
         snprintf(dev, sizeof(dev), "/dev/video%d", i);
         int fd = open_capture(dev, 0);
@@ -409,46 +738,59 @@ static void probe(void) {
         struct v4l2_capability cap;
         memset(&cap, 0, sizeof(cap));
         xioctl(fd, VIDIOC_QUERYCAP, &cap);
+        int single = !!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE);
+        int mplane = !!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE_MPLANE);
+        const char *type = (mplane && !single) ? "mplane" :
+                           (single && !mplane) ? "single" : "both";
 
         if (!first_dev) printf(",");
         first_dev = 0;
         printf("{\"dev\":\"%s\",\"card\":\"", dev);
         json_put((const char *)cap.card);
-        printf("\",\"formats\":[");
+        printf("\",\"type\":\"%s\",\"formats\":[", type);
 
         int first_fmt = 1;
-        struct v4l2_fmtdesc desc;
-        memset(&desc, 0, sizeof(desc));
-        desc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        for (desc.index = 0; xioctl(fd, VIDIOC_ENUM_FMT, &desc) == 0; desc.index++) {
-            if (!first_fmt) printf(",");
-            first_fmt = 0;
-            char fourcc[5] = {
-                (char)(desc.pixelformat & 0xff),
-                (char)((desc.pixelformat >> 8) & 0xff),
-                (char)((desc.pixelformat >> 16) & 0xff),
-                (char)((desc.pixelformat >> 24) & 0xff), 0
-            };
-            printf("{\"fourcc\":\"");
-            json_put(fourcc);
-            printf("\",\"desc\":\"");
-            json_put((const char *)desc.description);
-            printf("\",\"compressed\":%s}", (desc.flags & V4L2_FMT_FLAG_COMPRESSED) ? "true" : "false");
+        for (int t = 0; t < 2; t++) {
+            enum v4l2_buf_type buf_type = t == 0 ?
+                V4L2_BUF_TYPE_VIDEO_CAPTURE : V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+            if ((t == 0 && !single) || (t == 1 && !mplane)) continue;
+
+            struct v4l2_fmtdesc desc;
+            memset(&desc, 0, sizeof(desc));
+            desc.type = buf_type;
+            for (desc.index = 0; xioctl(fd, VIDIOC_ENUM_FMT, &desc) == 0; desc.index++) {
+                if (!first_fmt) printf(",");
+                first_fmt = 0;
+                char fourcc[5];
+                fourcc_str(desc.pixelformat, fourcc);
+                printf("{\"fourcc\":\"");
+                json_put(fourcc);
+                printf("\",\"desc\":\"");
+                json_put((const char *)desc.description);
+                printf("\",\"compressed\":%s,\"mplane\":%s}",
+                        (desc.flags & V4L2_FMT_FLAG_COMPRESSED) ? "true" : "false",
+                        t == 1 ? "true" : "false");
+            }
         }
         printf("],\"current\":");
+
         struct v4l2_format fmt;
         memset(&fmt, 0, sizeof(fmt));
-        fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        enum v4l2_buf_type current_type = mplane && !single ?
+            V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE : V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        fmt.type = current_type;
         if (xioctl(fd, VIDIOC_G_FMT, &fmt) == 0) {
-            char fourcc[5] = {
-                (char)(fmt.fmt.pix.pixelformat & 0xff),
-                (char)((fmt.fmt.pix.pixelformat >> 8) & 0xff),
-                (char)((fmt.fmt.pix.pixelformat >> 16) & 0xff),
-                (char)((fmt.fmt.pix.pixelformat >> 24) & 0xff), 0
-            };
+            char fourcc[5];
+            unsigned int pf = current_type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ?
+                fmt.fmt.pix_mp.pixelformat : fmt.fmt.pix.pixelformat;
+            unsigned int width = current_type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ?
+                fmt.fmt.pix_mp.width : fmt.fmt.pix.width;
+            unsigned int height = current_type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE ?
+                fmt.fmt.pix_mp.height : fmt.fmt.pix.height;
+            fourcc_str(pf, fourcc);
             printf("{\"fourcc\":\"");
             json_put(fourcc);
-            printf("\",\"width\":%u,\"height\":%u}", fmt.fmt.pix.width, fmt.fmt.pix.height);
+            printf("\",\"width\":%u,\"height\":%u}", width, height);
         } else {
             printf("null");
         }
@@ -486,11 +828,11 @@ int main(int argc, char *argv[]) {
                 "      capture --probe\n\n"
                 "选项:\n"
                 "  --output PATH     输出 JPEG 路径 (默认 %s)\n"
-                "  --device PATH     采集设备 (默认自动探测 /dev/video0..3)\n"
+                "  --device PATH     采集设备 (默认自动探测 /dev/video0..23)\n"
                 "  --warmup N        丢弃的预热帧数 (默认 3)\n"
-                "  --quality N       YUYV→JPEG 质量 (默认 85)\n"
+                "  --quality N       YUYV/NV12/NV16→JPEG 质量 (默认 85)\n"
                 "  --timeout MS      单帧等待超时 (默认 5000)\n"
-                "  --probe           枚举设备与格式，输出 JSON\n"
+                "  --probe           枚举设备与格式（含 MPLANE），输出 JSON\n"
                 "  --verbose, -v     打印诊断信息\n", DEFAULT_OUT);
             return 0;
         }
@@ -502,7 +844,7 @@ int main(int argc, char *argv[]) {
 #ifdef HAVE_LIBJPEG
         int src = selftest_yuyv(out, quality);
         if (src == 0 && meta) {
-            struct frame_info fi = {640, 360, 0};
+            struct frame_info fi = {640, 360, 0, "YUYV"};
             write_meta(meta, &fi, out, 0);
         }
         return src == 0 ? 0 : 1;
@@ -515,7 +857,7 @@ int main(int argc, char *argv[]) {
     char auto_dev[32];
     if (!dev) {
         if (find_device(auto_dev, sizeof(auto_dev)) < 0) {
-            fprintf(stderr, "capture: 未找到可用的视频采集设备 (/dev/video0..3)\n");
+            fprintf(stderr, "capture: 未找到可用的视频采集设备 (/dev/video0..23)\n");
             return 2;
         }
         dev = auto_dev;
@@ -529,10 +871,15 @@ int main(int argc, char *argv[]) {
 
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    struct frame_info info = {0, 0, 0};
-    int rc = grab_frame(fd, out, warmup, quality, timeout_ms, verbose, &info);
+    struct frame_info info = {0, 0, 0, ""};
+    int mplane = device_is_mplane(fd);
+    int rc = mplane
+        ? grab_frame_mplane(fd, out, warmup, quality, timeout_ms, verbose, &info)
+        : grab_frame(fd, out, warmup, quality, timeout_ms, verbose, &info);
     clock_gettime(CLOCK_MONOTONIC, &t1);
+    if (verbose) fprintf(stderr, "capture: stage=close fd=%d rc=%d\n", fd, rc);
     close(fd);
+    if (verbose) fprintf(stderr, "capture: stage=close ok\n");
 
     if (rc == 0) {
         struct stat st;

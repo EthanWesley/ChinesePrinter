@@ -6,8 +6,9 @@
 
 ## 分工
 
-- 设备（RV1106 单核 A7）：V4L2 单帧抓取输出 JPEG；执行键盘/鼠标原始 HID 报告；
-  行边界响应停止/暂停；逐步记录进度。
+- 设备（RV1106 单核 A7）：V4L2 单帧抓取输出 JPEG（单平面/Multiplanar）；
+  执行键盘/鼠标原始 HID 报告；行边界响应停止/暂停，`wait` 也可被 stop 中断；
+  逐步记录进度。
 - PC（MCP 服务器）：文本→Alt 码编码（与网页 JS 引擎逐字节一致）；绝对坐标→
   相对鼠标位移；序列分块与轮询；把 JPEG 作为 Image content block 交给 LLM。
 
@@ -53,54 +54,80 @@ mdwin/ascii/base64，与网页一致。未知动作或非法字段整单拒绝�
 
 ## 采集实现
 
-`capture.c` 枚举格式：MJPEG 直通（SOI/EOI 截取，不解码不缩放）；YUYV 回退
-libjpeg-turbo `jpeg_write_raw_data` 4:2:2 直接编码。默认丢弃 3 帧预热。
-YUYV 路径依赖静态链接的 libjpeg-turbo（`native/build.sh` 交叉编译）。
+`capture.c` 同时支持单平面与 Multiplanar（Rockchip rkcif/rkisp）V4L2：
+- MJPEG：SOI/EOI 截取直通，不解码不缩放（USB UVC 采集芯片路径）。
+- YUYV：libjpeg-turbo `jpeg_write_raw_data` 4:2:2 直接编码。
+- NV16/NV12：先解成交织 YUYV，再走同一编码器。
+- MPLANE 抓帧会设置 `VIDIOC_REQBUFS count=0` 后再 close；最后一帧不再入队，
+  规避当前 Rockchip 固件在 `vb2_fop_release` 处的卡死。
+默认丢弃 3 帧预热；静态链接 libjpeg-turbo 由 `native/build.sh` 交叉编译。
+
+真机 `192.168.10.114` 上 `/dev/video0` 是 rkcif 直采节点（640×480，YUYV），
+必须显式使用；`video11+` 的 rkisp 节点在本固件上 `STREAMON` 会触发内核 oops，
+已通过 `CAPTURE_DEVICE=/dev/video0` 在设备 env 中锁定。
 
 ## 鼠标
 
 PC 侧维护光标位置：序列首个鼠标动作前 rehome（多次 `mmove -127 -127` 钉到
 左上角），随后按 127 像素步长分段移动，尾报告补余数。点击前等待 50ms 稳定。
-目标电脑应关闭「提高指针精确度」以消除加速曲线。鼠标 gadget 若为绝对坐标
-（report descriptor 判断），预留 `mouse_assume_absolute` 开关。
+目标电脑应关闭「提高指针精确度」以消除加速曲线。若 gadget 为绝对坐标，
+PC 与设备须同时开启绝对模式（`mouse_assume_absolute` + `MOUSE_ABSOLUTE=1`），
+使用 `mabs` 报告 16-bit 归一化坐标；真机 `/dev/hidg2` 是 3 字节相对鼠标，
+因此安装参数固定为 `MOUSE_DEVICE=/dev/hidg2 MOUSE_REPORT_SIZE=3 MOUSE_ABSOLUTE=0`，
+滚轮在该 gadget 上不可用。
 
 ## 风险
 
-- 固件未启用 UVC：/health 报 `capture.available=false`，功能降级为盲操作。
+- 采集节点选错：真机 rkisp 节点会内核 oops；env 已锁定 `/dev/video0`。
+- 目标机 HDMI 无信号/休眠：`capture` 超时返回 503，MCP 侧转成明确错误；
+  接通信号后 `/capture` 自动恢复。
 - 无鼠标 gadget：翻译阶段拒绝鼠标动作并说明。
-- 鼠标报告长度非 4 字节：`--mouse-report-size` 可配。
+- 鼠标报告长度非 4 字节：`--mouse-report-size` 可配（真机为 3）。
 - 人工移动鼠标导致位置漂移：rehome 兜底，截屏验证闭环。
+- `mcp` SDK 2.x 已重命名 `FastMCP`；依赖必须锁定 `mcp>=1.2,<2`。
 
 ## 验收
 
-1. `sh probe_device.sh` 确认采集格式与鼠标 gadget。
-2. 真机 `curl :8849/capture -o t.jpg` 可打开。
+1. `sh probe_device.sh /tmp/capture` 确认采集格式与鼠标 gadget。
+2. 真机 `curl :8849/capture -o t.jpg` 可打开（需目标机 HDMI 有信号）。
 3. `curl -X POST :8849/seq --data-binary @seq.txt` 执行组合键、打字、点击。
 4. 8848 打字中 :8849 返回 409，反之亦然。
-5. `node tests/encoding.test.cjs`、`python3 tests/native_controls.py`、
-   `python3 tests/native_seq_protocol.py`、`python3 -m pytest mcp-server/tests` 全过。
+5. `node tests/encoding.test.cjs`、
+   `python3 tests/native_seq_protocol.py .deleted/seq_writer-host`、
+   `python -m pytest mcp-server/tests` 全过。
 
-## 实现状态（2026-11-17）
+## 实现状态（2026-11-17，真机 192.168.10.114 已部署）
 
-已完成并可在无硬件环境验证的部分：
+已完成并验证：
 
-- `native/capture.c`：V4L2 单帧 + MJPEG 直通 + YUYV→libjpeg-turbo；`--probe`
-  无设备时输出 `[]` 且退出码 0；`--selftest` 生成 640×360 渐变 JPEG 验证编码
-  路径（含 `--meta` 元数据）。
+- `native/capture.c`：单平面 + MPLANE；MJPEG/YUYV/NV16/NV12；
+  `--probe` 在真机正确枚举出 21 个视频节点及 MPLANE 格式；
+  `--selftest` 生成 640×360 渐变 JPEG 验证编码路径。
+  真机锁定 `/dev/video0` 后 `STREAMON/STREAMOFF/close` 不再卡死。
 - `native/seq_writer.c`：全部行协议指令、stop/pause/progress/step/error 文件；
-  `tests/native_seq_protocol.py` 5 项通过（全协议、暂停恢复、停止、未知指令、
-  绝对模式拒绝）。
+  `wait` 现可被 `/stop` 中断；`tests/native_seq_protocol.py` 5 项通过。
 - `automation_server.sh`：`/health` `/capture` `/seq` `/stop` `/abort` `/probe`
-  在本机以 `/dev/null` 伪设备验证；`/capture` 二进制正文与 `X-Frame-*` 头正确；
-  打字机忙时 `/seq` 返回 409。
-- `server.sh`：新增 4 行跨通道检查；`node tests/encoding.test.cjs` 16 项仍通过；
-  自动化通道忙时 `/api/type` 拒绝。
-- `mcp-server/`：编码 parity（65 条 fixtures，覆盖 5 种编码 × 13 组文本）、
-  动作翻译、鼠标分段、HTTP 客户端共 36 项单测通过。
+  全部在真机验证。`wait` 序列的 `total` 现按非空行计数，客户端多带换行不再
+  虚增一步。
+- `server.sh`：双通道互斥真机验证通过；修复了 dash 下 `source` 不存在的
+  `settings.env` 导致后台打字任务静默退出的问题。
+- `install.sh`：修复自动化 init 脚本路径被全局替换误改为
+  `/opt/chinese-printer-auto` 的问题；修复主服务 `pkill -f server.sh`
+  误杀 `automation_server.sh` 的问题；env 新增 `CAPTURE_DEVICE` 及鼠标参数。
+- `mcp-server/`：编码 parity（65 条 fixtures）、动作翻译、鼠标分段、HTTP 客户端
+  及集成测试共 **46 项通过**；依赖锁定 `mcp>=1.2,<2`；真实设备
+  `DeviceClient` 的 health / typewriter_busy / probe / seq / stop 均通过。
 
-待真机验收（需要 Luckfox 设备）：
+真机部署参数：`APP_PORT=8848`、`AUTOMATION_PORT=8849`、
+`CAPTURE_DEVICE=/dev/video0`、`HID_DEVICE=/dev/hidg0`、
+`MOUSE_DEVICE=/dev/hidg2`、`MOUSE_REPORT_SIZE=3`、`MOUSE_ABSOLUTE=0`。
 
-- M0 `probe_device.sh` 实测：`/dev/video*` 格式、鼠标 gadget 与报告长度。
-- M1 实拍 JPEG 可打开；M3/M4 真机组合键、打字、点击、拖拽、滚轮。
-- M6 端到端：截屏 → 批量填表 → 截屏验证。
+剩余外部条件：
+
+- 本次调试时目标机 HDMI 无有效信号（内核日志 `not detect 5v`），
+  因此 `/capture` 正确返回 503 而非卡死；接通 HDMI 源后按验收第 2 项
+  拍摄一张 JPEG 并确认 MCP `capture_screen` 返回图像块。
+- 真机键鼠实动作（组合键、打字、点击、拖拽）尚未在目标电脑上肉眼验收；
+  设备端协议与状态回传已通过 `wait` 类安全序列验证。
+- M6 完整闭环（截屏 → 批量填表 → 再截屏验证）待上述 HDMI 源就绪后执行。
 

@@ -192,6 +192,18 @@ static int wait_ready(const char *stop_file, const char *pause_file) {
     }
 }
 
+/* 让 wait 指令也能响应 stop，避免长等待期间只能靠 abort */
+static int wait_ms_interruptible(int ms, const char *stop_file) {
+    int elapsed = 0;
+    while (elapsed < ms) {
+        if (stop_file && access(stop_file, F_OK) == 0) return 0;
+        int slice = (ms - elapsed) > 20 ? 20 : (ms - elapsed);
+        usleep((useconds_t)slice * 1000);
+        elapsed += slice;
+    }
+    return 1;
+}
+
 static void save_progress(int fd, long total) {
     if (fd < 0) return;
     char value[32];
@@ -409,7 +421,7 @@ int main(int argc, char *argv[]) {
             int ms = ntok > 1 ? atoi(tok[1]) : 0;
             if (ms < 0) ms = 0;
             if (ms > 60000) ms = 60000;
-            usleep((useconds_t)ms * 1000);
+            if (!wait_ms_interruptible(ms, stop_file)) { exit_code = 130; break; }
 
         } else if (!strcmp(cmd, "step")) {
             save_step(step_fd, ntok > 1 ? atoi(tok[1]) : 0);

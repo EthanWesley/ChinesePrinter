@@ -283,8 +283,8 @@ api_health() {
         esac
     fi
 
-    # 读取当前延时设置
-    . "$SETTINGS_FILE" 2>/dev/null
+    # 读取当前延时设置（dash 中 source 不存在的文件会退出当前 shell）
+    if [ -f "$SETTINGS_FILE" ]; then . "$SETTINGS_FILE"; fi
     _cur_key_delay="${KEY_DELAY:-0}"
     _cur_alt_delay="${ALT_RELEASE_DELAY:-0}"
     _cur_char_delay="${CHAR_DELAY:-0}"
@@ -337,7 +337,7 @@ api_device_post() {
 
 # ---- API: /api/settings (GET) ----
 api_settings_get() {
-    . "$SETTINGS_FILE" 2>/dev/null
+    if [ -f "$SETTINGS_FILE" ]; then . "$SETTINGS_FILE"; fi
     _cur_key_delay="${KEY_DELAY:-0}"
     _cur_alt_delay="${ALT_RELEASE_DELAY:-0}"
     _cur_char_delay="${CHAR_DELAY:-0}"
@@ -544,8 +544,8 @@ api_type() {
     # 在启动任务前更新状态；后台任务的输出必须脱离 HTTP 响应管道。
     update_status true 0 "$_total" "$_encoding" ""
     (
-        # 重新加载最新延时设置
-        . "$SETTINGS_FILE" 2>/dev/null
+        # 重新加载最新延时设置（文件缺失时 dash 的 source 会直接退出子 shell，必须先判存在）
+        if [ -f "$SETTINGS_FILE" ]; then . "$SETTINGS_FILE"; fi
         KEY_DELAY="${KEY_DELAY:-0}"
         ALT_RELEASE_DELAY="${ALT_RELEASE_DELAY:-0}"
         CHAR_DELAY="${CHAR_DELAY:-0}"

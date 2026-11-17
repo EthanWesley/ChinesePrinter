@@ -33,12 +33,20 @@ fi
 EXISTING_PORT=""
 EXISTING_HID=""
 EXISTING_AUTO_PORT=""
+EXISTING_CAPTURE_DEVICE=""
+EXISTING_MOUSE_DEVICE=""
+EXISTING_MOUSE_REPORT_SIZE=""
+EXISTING_MOUSE_ABSOLUTE=""
 if [ "$IS_UPDATE" -eq 1 ] && [ -f "$ENV_FILE" ]; then
     while IFS='=' read -r _key _val; do
         case "$_key" in
-            APP_PORT)        EXISTING_PORT="$_val" ;;
-            HID_DEVICE)      EXISTING_HID="$_val" ;;
-            AUTOMATION_PORT) EXISTING_AUTO_PORT="$_val" ;;
+            APP_PORT)              EXISTING_PORT="$_val" ;;
+            HID_DEVICE)            EXISTING_HID="$_val" ;;
+            AUTOMATION_PORT)       EXISTING_AUTO_PORT="$_val" ;;
+            CAPTURE_DEVICE)        EXISTING_CAPTURE_DEVICE="$_val" ;;
+            MOUSE_DEVICE)          EXISTING_MOUSE_DEVICE="$_val" ;;
+            MOUSE_REPORT_SIZE)     EXISTING_MOUSE_REPORT_SIZE="$_val" ;;
+            MOUSE_ABSOLUTE)        EXISTING_MOUSE_ABSOLUTE="$_val" ;;
         esac
     done < "$ENV_FILE" 2>/dev/null || true
 fi
@@ -106,6 +114,13 @@ if [ "$AUTOMATION_PORT" = "$APP_PORT" ]; then
     AUTOMATION_PORT=8849
     [ "$APP_PORT" = "8849" ] && AUTOMATION_PORT=8850
 fi
+
+# 采集设备：真机 rkisp 节点会导致流启动异常，默认锁定 rkcif /dev/video0
+CAPTURE_DEVICE="${CAPTURE_DEVICE:-${EXISTING_CAPTURE_DEVICE:-/dev/video0}}"
+# 鼠标：真机 /dev/hidg2 是 3 字节相对鼠标；hidg1 是绝对坐标但固件无对应描述符路径时不用
+MOUSE_DEVICE="${MOUSE_DEVICE:-${EXISTING_MOUSE_DEVICE:-}}"
+MOUSE_REPORT_SIZE="${MOUSE_REPORT_SIZE:-${EXISTING_MOUSE_REPORT_SIZE:-4}}"
+MOUSE_ABSOLUTE="${MOUSE_ABSOLUTE:-${EXISTING_MOUSE_ABSOLUTE:-0}}"
 
 # ---- 脚本所在目录（源文件目录）----
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -177,6 +192,9 @@ else
 fi
 printf "  目标: Luckfox Pico KVM (RV1106G3)\n"
 printf "  端口: %s (打字机) | %s (AI 自动化) | HID: %s\n" "$APP_PORT" "$AUTOMATION_PORT" "$HID_DEVICE"
+printf "  采集: %s | 鼠标: %s (%s 字节, %s)\n" \
+    "$CAPTURE_DEVICE" "${MOUSE_DEVICE:-自动探测}" "$MOUSE_REPORT_SIZE" \
+    "$([ "$MOUSE_ABSOLUTE" = "1" ] && echo 绝对坐标 || echo 相对坐标)"
 line
 
 # ============================================================================
@@ -417,6 +435,19 @@ if [ "$IS_UPDATE" -eq 1 ] && [ -f "$ENV_FILE" ]; then
         NEED_UPDATE_ENV=1
         ok "env 已补充 AI 自动化通道端口: $AUTOMATION_PORT"
     fi
+    # 补齐采集/鼠标配置（已存在则保留）
+    for _kv in \
+        "CAPTURE_DEVICE=$CAPTURE_DEVICE" \
+        "MOUSE_DEVICE=$MOUSE_DEVICE" \
+        "MOUSE_REPORT_SIZE=$MOUSE_REPORT_SIZE" \
+        "MOUSE_ABSOLUTE=$MOUSE_ABSOLUTE"; do
+        _key="${_kv%%=*}"
+        if ! grep -q "^${_key}=" "$ENV_FILE" 2>/dev/null; then
+            printf '%s\n' "$_kv" >> "$ENV_FILE"
+            NEED_UPDATE_ENV=1
+            ok "env 已补充 $_key"
+        fi
+    done
 
     if [ "$NEED_UPDATE_ENV" -eq 1 ]; then
         ok "配置已更新（端口/HID）: $ENV_FILE"
@@ -435,10 +466,12 @@ ALT_RELEASE_DELAY=0
 CHAR_DELAY=0
 # AI 自动化通道（截图 + 键鼠序列，MCP 服务器连接此端口）
 AUTOMATION_PORT=$AUTOMATION_PORT
-# 鼠标 gadget 设置：留空自动探测；绝对坐标 gadget 时设 MOUSE_ABSOLUTE=1
-MOUSE_DEVICE=
-MOUSE_REPORT_SIZE=4
-MOUSE_ABSOLUTE=0
+# 截图设备：固定 rkcif 直采节点，避免 rkisp 流启动异常
+CAPTURE_DEVICE=$CAPTURE_DEVICE
+# 鼠标 gadget 设置：真机 /dev/hidg2 为 3 字节相对鼠标
+MOUSE_DEVICE=$MOUSE_DEVICE
+MOUSE_REPORT_SIZE=$MOUSE_REPORT_SIZE
+MOUSE_ABSOLUTE=$MOUSE_ABSOLUTE
 EOF
     ok "配置文件已创建: $ENV_FILE"
 fi
@@ -551,7 +584,8 @@ case "\$1" in
             rm -f "\$PIDFILE"
         fi
         # 也杀掉 socat 子进程
-        pkill -f "server.sh" 2>/dev/null || true
+        # 精确匹配主服务脚本，避免误杀 automation_server.sh
+        pkill -f "sh $DAEMON_DIR/server.sh" 2>/dev/null || true
         echo " done"
         ;;
     restart)
@@ -576,11 +610,63 @@ EOF
 
     chmod 755 "$INIT_SCRIPT"
 
-    # 由主服务 init 脚本派生自动化通道 init 脚本（替换服务名与启动脚本）
+    # 自动化通道 init 脚本：显式生成，避免全局替换服务名时误改 INSTALL_DIR/ENV_FILE 路径
     AUTO_INIT_SCRIPT="/etc/init.d/$SERVICE_NAME_AUTO"
-    sed -e "s|$SERVICE_NAME|$SERVICE_NAME_AUTO|g" \
-        -e "s|server.sh|automation_server.sh|g" \
-        "$INIT_SCRIPT" > "$AUTO_INIT_SCRIPT"
+    cat > "$AUTO_INIT_SCRIPT" <<EOF
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          $SERVICE_NAME_AUTO
+# Required-Start:    \$network
+# Required-Stop:     \$network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: ChinesePrinter AI automation channel
+### END INIT INFO
+
+DAEMON_DIR="$INSTALL_DIR"
+ENV_FILE="$ENV_FILE"
+PIDFILE="/var/run/$SERVICE_NAME_AUTO.pid"
+
+if [ -f "\$ENV_FILE" ]; then
+    export \$(grep -v '^#' "\$ENV_FILE" | xargs)
+fi
+
+case "\$1" in
+    start)
+        echo -n "Starting $SERVICE_NAME_AUTO..."
+        cd "\$DAEMON_DIR"
+        start-stop-daemon -S -m -p "\$PIDFILE" -b \\
+            -x /bin/sh -- "\$DAEMON_DIR/automation_server.sh"
+        echo " done"
+        ;;
+    stop)
+        echo -n "Stopping $SERVICE_NAME_AUTO..."
+        if [ -f "\$PIDFILE" ]; then
+            kill \$(cat "\$PIDFILE") 2>/dev/null || true
+            rm -f "\$PIDFILE"
+        fi
+        pkill -f "sh $DAEMON_DIR/automation_server.sh" 2>/dev/null || true
+        echo " done"
+        ;;
+    restart)
+        \$0 stop
+        sleep 1
+        \$0 start
+        ;;
+    status)
+        if [ -f "\$PIDFILE" ] && kill -0 \$(cat "\$PIDFILE") 2>/dev/null; then
+            echo "$SERVICE_NAME_AUTO is running (PID \$(cat \$PIDFILE))"
+        else
+            echo "$SERVICE_NAME_AUTO is stopped"
+        fi
+        ;;
+    *)
+        echo "Usage: \$0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+exit 0
+EOF
     chmod 755 "$AUTO_INIT_SCRIPT"
 
     if [ "$IS_UPDATE" -eq 0 ]; then

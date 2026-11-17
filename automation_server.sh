@@ -39,6 +39,9 @@ AUTO_FRAME="$STATE_DIR/auto_frame.jpg"
 AUTO_META="$STATE_DIR/auto_frame.json"
 
 CAPTURE_BIN="${CAPTURE_BIN:-$INSTALL_DIR/capture}"
+# 真机必须使用 rkcif 直采节点 /dev/video0；rkisp 节点（video11 等）在当前固件上
+# 启动流时会触发内核异常，因此默认显式锁定 video0。
+CAPTURE_DEVICE="${CAPTURE_DEVICE:-/dev/video0}"
 SEQ_BIN="${SEQ_BIN:-$INSTALL_DIR/seq_writer}"
 PROBE_BIN="${PROBE_BIN:-$INSTALL_DIR/probe_device.sh}"
 REPORT_DELAY="${REPORT_DELAY:-8}"
@@ -210,8 +213,8 @@ api_health() {
 
     printf '{"ok":true,"busy":%s,"progress":%s,"total":%s,"step":%s,"last_error":"%s",' \
         "$_busy" "$_progress" "$_total" "$_step" "$_last_err"
-    printf '"capture":{"available":%s,"binary":"%s","last_frame":%s},' \
-        "$_cap_ok" "$CAPTURE_BIN" "$_frame"
+    printf '"capture":{"available":%s,"binary":"%s","device":"%s","last_frame":%s},' \
+        "$_cap_ok" "$CAPTURE_BIN" "$CAPTURE_DEVICE" "$_frame"
     printf '"keyboard":{"available":%s,"device":"%s"},' "$_kbd_ok" "$_kbd"
     printf '"mouse":{"available":%s,"device":"%s","report_size":%s,"absolute":%s},' \
         "$_mouse_ok" "$_mouse" "$MOUSE_REPORT_SIZE" "$([ "$MOUSE_ABSOLUTE" = "1" ] && echo true || echo false)"
@@ -234,8 +237,8 @@ api_capture() {
     _err_file="$STATE_DIR/auto_capture.err.$$"
     rm -f "$_tmp_frame" "$_tmp_meta"
 
-    "$CAPTURE_BIN" --output "$_tmp_frame" --meta "$_tmp_meta" --warmup "$_warmup" \
-        >/dev/null 2>"$_err_file"
+    "$CAPTURE_BIN" --device "$CAPTURE_DEVICE" --output "$_tmp_frame" --meta "$_tmp_meta" \
+        --warmup "$_warmup" >/dev/null 2>"$_err_file"
     _rc=$?
 
     if [ "$_rc" != "0" ] || [ ! -s "$_tmp_frame" ]; then
@@ -307,9 +310,13 @@ api_seq() {
 
     _seq_file="$AUTO_SEQ.$$"
     head -c "$_len" > "$_seq_file"
-    # 补齐末尾换行，保证最后一条指令被计数
-    [ -s "$_seq_file" ] && printf '\n' >> "$_seq_file"
-    _total=$(wc -l < "$_seq_file" | tr -d ' ')
+    # 仅当最后一行缺少换行时补齐，避免多出一个空行被计为动作
+    if [ -s "$_seq_file" ]; then
+        _last_byte=$(tail -c 1 "$_seq_file" 2>/dev/null | od -An -tu1 | tr -d ' \n')
+        [ "$_last_byte" != "10" ] && printf '\n' >> "$_seq_file"
+    fi
+    # 按非空行计数（客户端可能多带一个末尾换行；seq_writer 也会跳过空行）
+    _total=$(awk 'NF {n++} END {print n+0}' "$_seq_file" | tr -d ' ')
     if [ "$_total" -le 0 ]; then
         rm -f "$_seq_file"
         http_json 400 '{"ok":false,"msg":"序列为空"}'
@@ -384,7 +391,7 @@ api_abort() {
     fi
     _mouse=$(find_mouse)
     if [ -n "$_mouse" ] && [ -e "$_mouse" ]; then
-        printf '\000\000\000\000' > "$_mouse" 2>/dev/null
+        dd if=/dev/zero of="$_mouse" bs=1 count="$MOUSE_REPORT_SIZE" 2>/dev/null || true
     fi
 
     _progress=$(cat "$AUTO_PROGRESS" 2>/dev/null | tr -d '\r\n')
@@ -505,7 +512,7 @@ log "ChinesePrinter 自动化通道启动 (shell + socat)"
 log "  监听端口: $PORT"
 log "  键盘设备: $(find_kbd)"
 log "  鼠标设备: $(find_mouse)"
-log "  截图工具: $CAPTURE_BIN"
+log "  截图工具: $CAPTURE_BIN (设备 $CAPTURE_DEVICE)"
 log "  序列执行: $SEQ_BIN"
 log "========================================="
 
@@ -518,7 +525,7 @@ fi
 [ -x "$SEQ_BIN" ] || warn "seq_writer 不可执行，序列端点将返回 503"
 
 export INSTALL_DIR PORT STATE_DIR LOG_FILE
-export CAPTURE_BIN SEQ_BIN PROBE_BIN
+export CAPTURE_BIN CAPTURE_DEVICE SEQ_BIN PROBE_BIN
 export REPORT_DELAY MOUSE_REPORT_SIZE MOUSE_ABSOLUTE
 export KBD_DEVICE MOUSE_DEVICE
 
