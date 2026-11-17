@@ -483,6 +483,13 @@ api_type() {
         return
     fi
 
+    # 跨通道互斥：:8849 自动化序列执行期间不接受打字任务（同一目标机键鼠冲突）
+    _auto_busy=$(json_get "$(cat "$STATE_DIR/auto_status.json" 2>/dev/null)" "busy")
+    if [ "$_auto_busy" = "true" ]; then
+        printf '{"ok":false,"msg":"自动化通道忙，请先停止"}'
+        return
+    fi
+
     # 运行时获取当前 HID 设备（允许网页切换）
     _cur_device=$(get_current_device)
 

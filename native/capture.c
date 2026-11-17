@@ -197,9 +197,16 @@ static int encode_yuyv(const unsigned char *src, int w, int h, int quality,
 }
 #endif
 
+struct frame_info {
+    int width;
+    int height;
+    int mjpeg;
+};
+
 /* 抓取一帧：返回 0 成功（JPEG 已写入 out_path） */
 static int grab_frame(int fd, const char *out_path,
-                      int warmup, int quality, int timeout_ms, int verbose) {
+                      int warmup, int quality, int timeout_ms, int verbose,
+                      struct frame_info *info) {
     int w = 0, h = 0;
     int is_mjpeg = 0;
 
@@ -210,6 +217,11 @@ static int grab_frame(int fd, const char *out_path,
     } else {
         fprintf(stderr, "capture: 设备不支持 MJPEG/YUYV\n");
         return -1;
+    }
+    if (info) {
+        info->width = w;
+        info->height = h;
+        info->mjpeg = is_mjpeg;
     }
     if (verbose)
         fprintf(stderr, "capture: 格式 %s %dx%d\n", is_mjpeg ? "MJPEG" : "YUYV", w, h);
@@ -359,6 +371,21 @@ static int selftest_yuyv(const char *out_path, int quality) {
 }
 #endif
 
+/* 写出帧元数据 JSON（供 :8849 /capture 响应头与 /health 使用） */
+static void write_meta(const char *path, const struct frame_info *fi,
+                       const char *out, long elapsed_ms) {
+    struct stat st;
+    long size = 0;
+    if (stat(out, &st) == 0) size = (long)st.st_size;
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    fprintf(f,
+            "{\"ok\":true,\"format\":\"%s\",\"width\":%d,\"height\":%d,"
+            "\"bytes\":%ld,\"elapsed_ms\":%ld}\n",
+            fi->mjpeg ? "MJPEG" : "YUYV", fi->width, fi->height, size, elapsed_ms);
+    fclose(f);
+}
+
 /* JSON 字符串转义（描述串一般 ASCII，仅处理引号/反斜杠/控制符） */
 static void json_put(const char *s) {
     for (; *s; s++) {
@@ -434,6 +461,7 @@ static void probe(void) {
 int main(int argc, char *argv[]) {
     const char *dev = NULL;
     const char *out = DEFAULT_OUT;
+    const char *meta = NULL;
     int warmup = 3;
     int quality = 85;
     int timeout_ms = 5000;
@@ -444,6 +472,7 @@ int main(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--device") && i + 1 < argc) dev = argv[++i];
         else if (!strcmp(argv[i], "--output") && i + 1 < argc) out = argv[++i];
+        else if (!strcmp(argv[i], "--meta") && i + 1 < argc) meta = argv[++i];
         else if (!strcmp(argv[i], "--warmup") && i + 1 < argc) warmup = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--quality") && i + 1 < argc) quality = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--timeout") && i + 1 < argc) timeout_ms = atoi(argv[++i]);
@@ -471,7 +500,12 @@ int main(int argc, char *argv[]) {
 
     if (do_selftest) {
 #ifdef HAVE_LIBJPEG
-        return selftest_yuyv(out, quality) == 0 ? 0 : 1;
+        int src = selftest_yuyv(out, quality);
+        if (src == 0 && meta) {
+            struct frame_info fi = {640, 360, 0};
+            write_meta(meta, &fi, out, 0);
+        }
+        return src == 0 ? 0 : 1;
 #else
         fprintf(stderr, "capture: 未启用 libjpeg，无法执行 YUYV 自检\n");
         return 1;
@@ -495,7 +529,8 @@ int main(int argc, char *argv[]) {
 
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
-    int rc = grab_frame(fd, out, warmup, quality, timeout_ms, verbose);
+    struct frame_info info = {0, 0, 0};
+    int rc = grab_frame(fd, out, warmup, quality, timeout_ms, verbose, &info);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     close(fd);
 
@@ -504,6 +539,7 @@ int main(int argc, char *argv[]) {
         long ms = (t1.tv_sec - t0.tv_sec) * 1000L + (t1.tv_nsec - t0.tv_nsec) / 1000000L;
         if (stat(out, &st) == 0)
             fprintf(stderr, "capture: OK %ld bytes %ld ms\n", (long)st.st_size, ms);
+        if (meta) write_meta(meta, &info, out, ms);
         return 0;
     }
     fprintf(stderr, "capture: 抓取失败\n");

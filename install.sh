@@ -20,6 +20,7 @@ set -e
 # ---- 固定配置 ----
 INSTALL_DIR="/opt/chinese-printer"
 SERVICE_NAME="chinese-printer"
+SERVICE_NAME_AUTO="chinese-printer-auto"
 ENV_FILE="$INSTALL_DIR/chinese-printer.env"
 
 # ---- 检测安装模式 ----
@@ -31,11 +32,13 @@ fi
 # ---- 从现有 .env 读取配置（更新模式）----
 EXISTING_PORT=""
 EXISTING_HID=""
+EXISTING_AUTO_PORT=""
 if [ "$IS_UPDATE" -eq 1 ] && [ -f "$ENV_FILE" ]; then
     while IFS='=' read -r _key _val; do
         case "$_key" in
             APP_PORT)        EXISTING_PORT="$_val" ;;
             HID_DEVICE)      EXISTING_HID="$_val" ;;
+            AUTOMATION_PORT) EXISTING_AUTO_PORT="$_val" ;;
         esac
     done < "$ENV_FILE" 2>/dev/null || true
 fi
@@ -61,6 +64,9 @@ if [ -n "$EXISTING_PORT" ] && ! _valid_port "$EXISTING_PORT"; then
 fi
 if [ -n "$EXISTING_HID" ] && ! _valid_hid "$EXISTING_HID"; then
     EXISTING_HID=""
+fi
+if [ -n "$EXISTING_AUTO_PORT" ] && ! _valid_port "$EXISTING_AUTO_PORT"; then
+    EXISTING_AUTO_PORT=""
 fi
 
 # ---- 参数解析 ----
@@ -89,6 +95,16 @@ if [ "$_RETAIN_CONFIG" -eq 1 ] && [ "$IS_UPDATE" -eq 1 ]; then
 else
     APP_PORT="${_ARG_PORT:-${APP_PORT:-${EXISTING_PORT:-8848}}}"
     HID_DEVICE="${_ARG_HID:-${HID_DEVICE:-${EXISTING_HID:-/dev/hidg0}}}"
+fi
+
+# AI 自动化通道端口（独立于打字机端口，默认 8849）
+AUTOMATION_PORT="${AUTOMATION_PORT:-${EXISTING_AUTO_PORT:-8849}}"
+if ! _valid_port "$AUTOMATION_PORT"; then
+    AUTOMATION_PORT=8849
+fi
+if [ "$AUTOMATION_PORT" = "$APP_PORT" ]; then
+    AUTOMATION_PORT=8849
+    [ "$APP_PORT" = "8849" ] && AUTOMATION_PORT=8850
 fi
 
 # ---- 脚本所在目录（源文件目录）----
@@ -160,7 +176,7 @@ else
     printf "  模式: 首次安装\n"
 fi
 printf "  目标: Luckfox Pico KVM (RV1106G3)\n"
-printf "  端口: %s | HID: %s\n" "$APP_PORT" "$HID_DEVICE"
+printf "  端口: %s (打字机) | %s (AI 自动化) | HID: %s\n" "$APP_PORT" "$AUTOMATION_PORT" "$HID_DEVICE"
 line
 
 # ============================================================================
@@ -292,7 +308,7 @@ BACKUP_DIR=""
 if [ "$IS_UPDATE" -eq 1 ]; then
     BACKUP_DIR="$INSTALL_DIR/.backup-$(date +%Y%m%d%H%M%S)"
     mkdir -p "$BACKUP_DIR"
-    for f in server.sh hid_keyboard.sh; do
+    for f in server.sh hid_keyboard.sh automation_server.sh probe_device.sh; do
         [ -f "$INSTALL_DIR/$f" ] && cp "$INSTALL_DIR/$f" "$BACKUP_DIR/$f"
     done
     [ -f "$INSTALL_DIR/templates/index.html" ] && {
@@ -311,7 +327,7 @@ if [ "$IS_UPDATE" -eq 1 ]; then
 fi
 
 # 复制 Shell 脚本
-for f in server.sh hid_keyboard.sh; do
+for f in server.sh hid_keyboard.sh automation_server.sh probe_device.sh; do
     src="$SCRIPT_DIR/$f"
     if [ ! -f "$src" ]; then
         err "源文件不存在: $src"
@@ -336,6 +352,22 @@ else
     info "未找到 C 原生加速器 (native/hid_writer), 使用 Shell 模式"
 fi
 
+# 复制 AI 自动化通道二进制（capture 截图 / seq_writer 键鼠序列）
+for _bin in capture seq_writer; do
+    if [ -f "$SCRIPT_DIR/native/$_bin" ]; then
+        cp "$SCRIPT_DIR/native/$_bin" "$INSTALL_DIR/$_bin"
+        chmod 755 "$INSTALL_DIR/$_bin"
+        if "$INSTALL_DIR/$_bin" --help >/dev/null 2>&1; then
+            ok "已安装: $_bin (AI 自动化通道)"
+        else
+            warn "$_bin 安装但无法执行 (可能是架构不匹配)，相关端点将返回 503"
+            rm -f "$INSTALL_DIR/$_bin"
+        fi
+    else
+        info "未找到 native/$_bin，对应端点将返回 503"
+    fi
+done
+
 # 复制 HTML 和 GBK 编码表
 for f in index.html gbk_table.json; do
     src="$SCRIPT_DIR/templates/$f"
@@ -347,7 +379,8 @@ for f in index.html gbk_table.json; do
     fi
 done
 
-chmod 755 "$INSTALL_DIR/server.sh" "$INSTALL_DIR/hid_keyboard.sh"
+chmod 755 "$INSTALL_DIR/server.sh" "$INSTALL_DIR/hid_keyboard.sh" \
+          "$INSTALL_DIR/automation_server.sh" "$INSTALL_DIR/probe_device.sh"
 
 # ============================================================================
 # 3. 配置环境变量（更新时保留现有配置）
@@ -378,6 +411,13 @@ if [ "$IS_UPDATE" -eq 1 ] && [ -f "$ENV_FILE" ]; then
         warn "修复 env 中的 HID_DEVICE: '$CUR_HID' -> '$HID_DEVICE'"
     fi
 
+    # 旧版本 env 没有自动化端口，补齐（已存在则保留用户设置）
+    if ! grep -q '^AUTOMATION_PORT=' "$ENV_FILE" 2>/dev/null; then
+        printf 'AUTOMATION_PORT=%s\n' "$AUTOMATION_PORT" >> "$ENV_FILE"
+        NEED_UPDATE_ENV=1
+        ok "env 已补充 AI 自动化通道端口: $AUTOMATION_PORT"
+    fi
+
     if [ "$NEED_UPDATE_ENV" -eq 1 ]; then
         ok "配置已更新（端口/HID）: $ENV_FILE"
     else
@@ -393,6 +433,8 @@ HID_DEVICE=$HID_DEVICE
 KEY_DELAY=0
 ALT_RELEASE_DELAY=0
 CHAR_DELAY=0
+# AI 自动化通道（截图 + 键鼠序列，MCP 服务器连接此端口）
+AUTOMATION_PORT=$AUTOMATION_PORT
 EOF
     ok "配置文件已创建: $ENV_FILE"
 fi
@@ -438,6 +480,37 @@ EOF
         systemctl restart "$SERVICE_NAME"
         ok "systemd 服务已创建并启用: $SERVICE_NAME"
     fi
+
+    # ---- AI 自动化通道服务（独立端口，独立进程）----
+    AUTO_SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME_AUTO}.service"
+    cat > "$AUTO_SERVICE_FILE" <<EOF
+[Unit]
+Description=ChinesePrinter AI Automation Channel (capture + HID sequence)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=$INSTALL_DIR
+EnvironmentFile=$ENV_FILE
+ExecStart=/bin/sh $INSTALL_DIR/automation_server.sh
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    if [ "$IS_UPDATE" -eq 1 ]; then
+        systemctl restart "$SERVICE_NAME_AUTO"
+    else
+        systemctl enable "$SERVICE_NAME_AUTO" 2>/dev/null
+        systemctl restart "$SERVICE_NAME_AUTO"
+    fi
+    ok "AI 自动化通道服务已就绪: $SERVICE_NAME_AUTO (:$AUTOMATION_PORT)"
 else
     INIT_SCRIPT="/etc/init.d/$SERVICE_NAME"
     cat > "$INIT_SCRIPT" <<EOF
@@ -499,6 +572,13 @@ EOF
 
     chmod 755 "$INIT_SCRIPT"
 
+    # 由主服务 init 脚本派生自动化通道 init 脚本（替换服务名与启动脚本）
+    AUTO_INIT_SCRIPT="/etc/init.d/$SERVICE_NAME_AUTO"
+    sed -e "s|$SERVICE_NAME|$SERVICE_NAME_AUTO|g" \
+        -e "s|server.sh|automation_server.sh|g" \
+        "$INIT_SCRIPT" > "$AUTO_INIT_SCRIPT"
+    chmod 755 "$AUTO_INIT_SCRIPT"
+
     if [ "$IS_UPDATE" -eq 0 ]; then
         if command -v update-rc.d >/dev/null 2>&1; then
             update-rc.d "$SERVICE_NAME" defaults 2>/dev/null
@@ -553,12 +633,39 @@ EOF
         fi
     fi
 
+    # 自动化通道开机自启（与主服务同机制，S98 保证在 S99 主服务之后启动）
+    if [ "$IS_UPDATE" -eq 0 ]; then
+        if command -v update-rc.d >/dev/null 2>&1; then
+            update-rc.d "$SERVICE_NAME_AUTO" defaults 2>/dev/null
+        elif command -v chkconfig >/dev/null 2>&1; then
+            chkconfig --add "$SERVICE_NAME_AUTO" 2>/dev/null
+        elif [ -f /etc/init.d/rcS ] && grep -q "S??\*" /etc/init.d/rcS 2>/dev/null; then
+            for _n in 98 97 96 50; do
+                _cand="/etc/init.d/S${_n}${SERVICE_NAME_AUTO}"
+                if [ ! -e "$_cand" ]; then
+                    ln -sf "$AUTO_INIT_SCRIPT" "$_cand"
+                    break
+                fi
+            done
+        fi
+    else
+        if [ ! -e "/etc/init.d/S98${SERVICE_NAME_AUTO}" ] && \
+           [ -f /etc/init.d/rcS ] && grep -q "S??\*" /etc/init.d/rcS 2>/dev/null; then
+            ln -sf "$AUTO_INIT_SCRIPT" "/etc/init.d/S98${SERVICE_NAME_AUTO}"
+        fi
+    fi
+    ok "AI 自动化通道自启已配置: $SERVICE_NAME_AUTO"
+
     if [ "$IS_UPDATE" -eq 1 ]; then
         "$INIT_SCRIPT" restart 2>/dev/null || "$INIT_SCRIPT" start
         ok "init.d 服务已重启: $SERVICE_NAME"
+        "$AUTO_INIT_SCRIPT" restart 2>/dev/null || "$AUTO_INIT_SCRIPT" start
+        ok "init.d 自动化通道已重启: $SERVICE_NAME_AUTO"
     else
         "$INIT_SCRIPT" start
         ok "init.d 服务已启动: $SERVICE_NAME"
+        "$AUTO_INIT_SCRIPT" start
+        ok "init.d 自动化通道已启动: $SERVICE_NAME_AUTO"
     fi
 fi
 
@@ -602,6 +709,13 @@ if command -v curl >/dev/null 2>&1; then
     else
         warn "服务尚未响应 (HTTP $_health)，如持续异常请检查日志: tail -f /tmp/chinese-printer.log"
     fi
+
+    _auto_health=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:$AUTOMATION_PORT/health" 2>/dev/null)
+    if [ "$_auto_health" = "200" ]; then
+        ok "AI 自动化通道响应正常 (:$AUTOMATION_PORT/health → 200)"
+    else
+        warn "AI 自动化通道尚未响应 (HTTP $_auto_health)，日志: tail -f /tmp/chinese-printer-auto.log"
+    fi
 fi
 
 echo ""
@@ -615,6 +729,7 @@ fi
 line
 echo ""
 printf "  访问地址:  ${CYAN}http://%s:%s${NC}\n" "$IP" "$APP_PORT"
+printf "  AI 自动化: ${CYAN}http://%s:%s${NC}  (MCP 服务器连接此端口)\n" "$IP" "$AUTOMATION_PORT"
 printf "  HID 设备:  %s\n" "$HID_DEVICE"
 printf "  依赖:      socat + awk（系统自带，无 Python）\n"
 printf "  安装目录:  %s\n" "$INSTALL_DIR"
@@ -624,12 +739,15 @@ if [ "$HAS_SYSTEMD" -eq 1 ]; then
     echo "    systemctl status  $SERVICE_NAME    # 查看状态"
     echo "    systemctl restart $SERVICE_NAME    # 重启服务"
     echo "    systemctl stop    $SERVICE_NAME    # 停止服务"
+    echo "    systemctl status  $SERVICE_NAME_AUTO   # AI 自动化通道状态"
     echo "    journalctl -u $SERVICE_NAME -f     # 查看日志"
 else
     echo "    $INIT_SCRIPT status               # 查看状态"
     echo "    $INIT_SCRIPT restart              # 重启服务"
     echo "    $INIT_SCRIPT stop                 # 停止服务"
+    echo "    $AUTO_INIT_SCRIPT status          # AI 自动化通道状态"
     echo "    tail -f /tmp/chinese-printer.log  # 查看日志"
+    echo "    tail -f /tmp/chinese-printer-auto.log  # 自动化通道日志"
 fi
 echo ""
 echo "  修改配置:  编辑 $ENV_FILE 后重启服务"
