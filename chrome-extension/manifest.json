@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "ChinesePrinter Sidebar",
+  "version": "1.0.0",
+  "description": "点击图标在侧边栏打开当前 IP 的中文打字机界面（端口 8848）",
+  "permissions": [
+    "activeTab",
+    "sidePanel",
+    "tabs"
+  ],
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
+    "default_title": "打开中文打字机侧边栏"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

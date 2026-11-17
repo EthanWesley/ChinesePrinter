@@ -32,3 +32,11 @@ config.yaml
 
 # 回收及保留的检查产物
 .deleted/
+
+# 扩展打包/解压产生的冗余副本（内容与 chrome-extension/ 逐字节相同）
+新建文件夹/
+
+# 工作区记忆与设计源图（不随扩展分发）
+.workbuddy-ai/
+chrome-extension/icons/a.png
+chrome-extension/icons/打字机logo设计.png
