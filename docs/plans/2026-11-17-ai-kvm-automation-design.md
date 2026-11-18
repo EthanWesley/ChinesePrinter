@@ -119,15 +119,38 @@ PC 与设备须同时开启绝对模式（`mouse_assume_absolute` + `MOUSE_ABSOL
   `DeviceClient` 的 health / typewriter_busy / probe / seq / stop 均通过。
 
 真机部署参数：`APP_PORT=8848`、`AUTOMATION_PORT=8849`、
-`CAPTURE_DEVICE=/dev/video0`、`HID_DEVICE=/dev/hidg0`、
+`CAPTURE_DEVICE=/dev/video0`、`CAPTURE_YIELD_KVM=1`、`HID_DEVICE=/dev/hidg0`、
 `MOUSE_DEVICE=/dev/hidg2`、`MOUSE_REPORT_SIZE=3`、`MOUSE_ABSOLUTE=0`。
+
+### 截图链路实测（2026-11-18，HDMI 源已接通）
+
+HDMI 源接通后（rk628 锁 1920×1080@60），完整截图链路已实测打通：
+
+- `/capture` 返回 **1920×1080 有效桌面 JPEG**（ffd8 头正确，约 100 KB，
+  单帧约 1.4 s）。截图内容清晰，任务栏图标/时间/文字均可辨认。
+- MCP `DeviceClient.capture()` 返回 `(bytes, headers)`，JPEG 可正常解码。
+- FastMCP `capture_screen(scale=0.5, quality=75)` 返回 `mcp...Image` 图像块，
+  缩放后 960×540、约 20 KB，画质仍可辨认任务栏——满足 AI 看图规划需求。
+- 5 个 MCP 工具（capture_screen / run_sequence / stop_sequence / get_status /
+  set_config）均正常注册。
+
+**硬件限制与解决**：rkcif 只有一路 DMA，设备自带 `kvm_video`（Web 视频流）
+与截图无法同时独占 `/dev/video0`。已验证的可选节点均不可用：
+
+- rkisp 节点（video11+）：`STREAMON` 触发内核 oops；
+- rkcif_id1..3（video1..3）：虽能 `STREAMON` 但没有数据流；
+- rkcif_scale_ch0（video4）：只支持 Bayer（BYR2），不支持 YUYV/NV12；
+- media-ctl 改链路绑定：视频流运行时返回 `resource busy`。
+
+因此 `CAPTURE_YIELD_KVM=1`（默认）时，`/capture` 首轮抓帧失败后会临时
+kill `kvm_video` 让出设备，抓帧成功后 `kvm_app` 在数秒内自动把视频服务拉起
+（实测 Web 端口恢复 200）。代价是每次截图时 Web 视频短暂中断约 3 秒。
+若不允许中断，设 `CAPTURE_YIELD_KVM=0`，此时 Web 视频占用期间 `/capture`
+返回 503。
 
 剩余外部条件：
 
-- 本次调试时目标机 HDMI 无有效信号（内核日志 `not detect 5v`），
-  因此 `/capture` 正确返回 503 而非卡死；接通 HDMI 源后按验收第 2 项
-  拍摄一张 JPEG 并确认 MCP `capture_screen` 返回图像块。
 - 真机键鼠实动作（组合键、打字、点击、拖拽）尚未在目标电脑上肉眼验收；
   设备端协议与状态回传已通过 `wait` 类安全序列验证。
-- M6 完整闭环（截屏 → 批量填表 → 再截屏验证）待上述 HDMI 源就绪后执行。
+- M6 完整闭环（截屏 → 批量填表 → 再截屏验证）待键鼠实动作验收后执行。
 

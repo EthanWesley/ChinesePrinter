@@ -18,7 +18,7 @@ AI harness ──MCP stdio──▶ python -m chinese_printer_mcp.server
 
 - Python ≥ 3.10。
 - 设备已装本仓库固件与脚本（在设备上 `sudo sh install.sh` 部署/更新），`automation_server.sh` 在 :8849 运行；先 `curl http://<设备IP>:8849/health` 确认。
-- 真机已验证参数：`CAPTURE_DEVICE=/dev/video0`、`MOUSE_DEVICE=/dev/hidg2`、`MOUSE_REPORT_SIZE=3`、`MOUSE_ABSOLUTE=0`（3 字节相对鼠标，无滚轮）。安装脚本会自动写入 env。
+- 真机已验证参数：`CAPTURE_DEVICE=/dev/video0`、`CAPTURE_YIELD_KVM=1`、`MOUSE_DEVICE=/dev/hidg2`、`MOUSE_REPORT_SIZE=3`、`MOUSE_ABSOLUTE=0`（3 字节相对鼠标，无滚轮）。安装脚本会自动写入 env。
 - 目标 PC 开启 NumLock（Alt 码依赖数字小键盘），关闭 Windows「提高指针精确度」，否则点击会偏移。
 - HDMI 采集线与 USB HID 线已接好，且目标机 HDMI 输出必须处于激活状态；休眠/无信号时 `/capture` 会返回 503。
 
@@ -159,6 +159,7 @@ asyncio.run(main())
 | `无法连接设备` | 确认设备上电、同网段、`host` 正确；`curl http://<host>:8849/health` 直连验证 |
 | `capture` 返回 503 | 目标机 HDMI 无信号/休眠时会超时；也可能无 `/dev/video*` 或 `capture` 二进制缺失。设备上跑 `curl :8849/capture -i` 看 `detail`，再跑 `sh probe_device.sh` |
 | rkisp 节点卡死 | 不要改动 `CAPTURE_DEVICE`；真机必须使用 rkcif 直采 `/dev/video0`，`video11+` 在当前固件上 `STREAMON` 会内核 oops |
+| 截图时 Web 视频短暂中断 | rkcif 只有一路 DMA，截图与设备自带 `kvm_video`（Web 视频）无法同时独占 `/dev/video0`。默认 `CAPTURE_YIELD_KVM=1`：截图时让 `kvm_video` 短暂退出，抓完由 `kvm_app` 自动恢复（约 3 秒）。若不允许中断，设 `CAPTURE_YIELD_KVM=0`，此时视频占用期间截图返回 503 |
 | `mouse_available: false` | 没有 `/dev/hidg*` 鼠标 gadget，鼠标动作不生效，可先用键盘 |
 | 409 通道忙 | `:8848` 打字机正在打字，或 `:8849` 自身在跑序列；先 `stop_sequence` 或等打字结束 |
 | 乱码 / 无输入 | 检查目标机 NumLock、输入法与代码页，换 `type.enc`；Alt 码必须走数字小键盘 |
