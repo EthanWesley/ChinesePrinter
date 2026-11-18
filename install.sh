@@ -34,6 +34,7 @@ EXISTING_PORT=""
 EXISTING_HID=""
 EXISTING_AUTO_PORT=""
 EXISTING_CAPTURE_DEVICE=""
+EXISTING_CAPTURE_YIELD_KVM=""
 EXISTING_MOUSE_DEVICE=""
 EXISTING_MOUSE_REPORT_SIZE=""
 EXISTING_MOUSE_ABSOLUTE=""
@@ -44,6 +45,7 @@ if [ "$IS_UPDATE" -eq 1 ] && [ -f "$ENV_FILE" ]; then
             HID_DEVICE)            EXISTING_HID="$_val" ;;
             AUTOMATION_PORT)       EXISTING_AUTO_PORT="$_val" ;;
             CAPTURE_DEVICE)        EXISTING_CAPTURE_DEVICE="$_val" ;;
+            CAPTURE_YIELD_KVM)     EXISTING_CAPTURE_YIELD_KVM="$_val" ;;
             MOUSE_DEVICE)          EXISTING_MOUSE_DEVICE="$_val" ;;
             MOUSE_REPORT_SIZE)     EXISTING_MOUSE_REPORT_SIZE="$_val" ;;
             MOUSE_ABSOLUTE)        EXISTING_MOUSE_ABSOLUTE="$_val" ;;
@@ -117,6 +119,8 @@ fi
 
 # 采集设备：真机 rkisp 节点会导致流启动异常，默认锁定 rkcif /dev/video0
 CAPTURE_DEVICE="${CAPTURE_DEVICE:-${EXISTING_CAPTURE_DEVICE:-/dev/video0}}"
+# 截图与 Web 视频争用 rkcif 单路 DMA：默认截图时临时让出 kvm_video（抓完自动恢复）
+CAPTURE_YIELD_KVM="${CAPTURE_YIELD_KVM:-${EXISTING_CAPTURE_YIELD_KVM:-1}}"
 # 鼠标：真机 /dev/hidg2 是 3 字节相对鼠标；hidg1 是绝对坐标但固件无对应描述符路径时不用
 MOUSE_DEVICE="${MOUSE_DEVICE:-${EXISTING_MOUSE_DEVICE:-}}"
 MOUSE_REPORT_SIZE="${MOUSE_REPORT_SIZE:-${EXISTING_MOUSE_REPORT_SIZE:-4}}"
@@ -438,6 +442,7 @@ if [ "$IS_UPDATE" -eq 1 ] && [ -f "$ENV_FILE" ]; then
     # 补齐采集/鼠标配置（已存在则保留）
     for _kv in \
         "CAPTURE_DEVICE=$CAPTURE_DEVICE" \
+        "CAPTURE_YIELD_KVM=$CAPTURE_YIELD_KVM" \
         "MOUSE_DEVICE=$MOUSE_DEVICE" \
         "MOUSE_REPORT_SIZE=$MOUSE_REPORT_SIZE" \
         "MOUSE_ABSOLUTE=$MOUSE_ABSOLUTE"; do
@@ -468,6 +473,8 @@ CHAR_DELAY=0
 AUTOMATION_PORT=$AUTOMATION_PORT
 # 截图设备：固定 rkcif 直采节点，避免 rkisp 流启动异常
 CAPTURE_DEVICE=$CAPTURE_DEVICE
+# 截图与 Web 视频争用单路 DMA：1=截图时临时让出 kvm_video（抓完自动恢复）
+CAPTURE_YIELD_KVM=$CAPTURE_YIELD_KVM
 # 鼠标 gadget 设置：真机 /dev/hidg2 为 3 字节相对鼠标
 MOUSE_DEVICE=$MOUSE_DEVICE
 MOUSE_REPORT_SIZE=$MOUSE_REPORT_SIZE

@@ -42,6 +42,10 @@ CAPTURE_BIN="${CAPTURE_BIN:-$INSTALL_DIR/capture}"
 # 真机必须使用 rkcif 直采节点 /dev/video0；rkisp 节点（video11 等）在当前固件上
 # 启动流时会触发内核异常，因此默认显式锁定 video0。
 CAPTURE_DEVICE="${CAPTURE_DEVICE:-/dev/video0}"
+# 硬件限制：rkcif 只有一路 DMA，设备自带 kvm_video(Web 视频) 与截图无法同时独占 video0。
+# CAPTURE_YIELD_KVM=1（默认）：抓帧失败时临时让 kvm_video 退出，抓完由 kvm_app 自动拉起。
+# CAPTURE_YIELD_KVM=0：不让出，Web 视频占用时 /capture 直接返回 503。
+CAPTURE_YIELD_KVM="${CAPTURE_YIELD_KVM:-1}"
 SEQ_BIN="${SEQ_BIN:-$INSTALL_DIR/seq_writer}"
 PROBE_BIN="${PROBE_BIN:-$INSTALL_DIR/probe_device.sh}"
 REPORT_DELAY="${REPORT_DELAY:-8}"
@@ -221,6 +225,32 @@ api_health() {
     printf '"typewriter_busy":%s,"port":%s}' "$_tw_busy" "$PORT"
 }
 
+# 释放被 kvm_video 独占的采集节点。
+# rkcif 硬件只有一路 DMA，kvm_video(Web 视频) 与 capture 无法同时打开 /dev/video0。
+# 这里 suspend 掉 kvm_video 让出设备；kvm_app 作为父进程会在数秒内自动把它拉起。
+_kvm_suspend_pid=""
+yield_kvm_for_capture() {
+    [ "$CAPTURE_YIELD_KVM" = "1" ] || return 1
+    # 通过 comm 精确匹配，避免 pkill -f 误杀 SSH 会话自身
+    _kvm_suspend_pid=""
+    for _p in /proc/[0-9]*; do
+        [ -r "$_p/comm" ] || continue
+        [ "$(cat "$_p/comm" 2>/dev/null)" = "kvm_video" ] || continue
+        _kvm_suspend_pid="${_p##*/}"
+        break
+    done
+    [ -n "$_kvm_suspend_pid" ] || return 1
+    kill -9 "$_kvm_suspend_pid" 2>/dev/null || return 1
+    # 等待设备释放（最多 2 秒）
+    _w=0
+    while [ $_w -lt 20 ]; do
+        fuser "$CAPTURE_DEVICE" >/dev/null 2>&1 || return 0
+        sleep 0.1
+        _w=$((_w + 1))
+    done
+    return 1
+}
+
 # ---- API: /capture ----
 # 响应为二进制 JPEG：Content-Length 由文件字节数给出，正文用 cat 直写 socket。
 api_capture() {
@@ -240,6 +270,20 @@ api_capture() {
     "$CAPTURE_BIN" --device "$CAPTURE_DEVICE" --output "$_tmp_frame" --meta "$_tmp_meta" \
         --warmup "$_warmup" >/dev/null 2>"$_err_file"
     _rc=$?
+
+    # 首轮失败且设备被 kvm_video 独占：让出设备后重试一次
+    if [ "$_rc" != "0" ] || [ ! -s "$_tmp_frame" ]; then
+        if yield_kvm_for_capture; then
+            warn "采集节点被 kvm_video 独占，已临时让出 (pid=$_kvm_suspend_pid)，重试抓帧"
+            rm -f "$_tmp_frame" "$_tmp_meta" "$_err_file"
+            "$CAPTURE_BIN" --device "$CAPTURE_DEVICE" --output "$_tmp_frame" --meta "$_tmp_meta" \
+                --warmup "$_warmup" >/dev/null 2>"$_err_file"
+            _rc=$?
+            if [ "$_rc" = "0" ] && [ -s "$_tmp_frame" ]; then
+                log "让出后抓帧成功；kvm_app 将在数秒内自动恢复 Web 视频流"
+            fi
+        fi
+    fi
 
     if [ "$_rc" != "0" ] || [ ! -s "$_tmp_frame" ]; then
         _detail=$(tail -n 2 "$_err_file" 2>/dev/null | tr '\r\n' '  ' | sed 's/\\/\\\\/g; s/"/\\"/g')
@@ -525,7 +569,7 @@ fi
 [ -x "$SEQ_BIN" ] || warn "seq_writer 不可执行，序列端点将返回 503"
 
 export INSTALL_DIR PORT STATE_DIR LOG_FILE
-export CAPTURE_BIN CAPTURE_DEVICE SEQ_BIN PROBE_BIN
+export CAPTURE_BIN CAPTURE_DEVICE CAPTURE_YIELD_KVM SEQ_BIN PROBE_BIN
 export REPORT_DELAY MOUSE_REPORT_SIZE MOUSE_ABSOLUTE
 export KBD_DEVICE MOUSE_DEVICE
 
