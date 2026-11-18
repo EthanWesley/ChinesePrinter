@@ -65,6 +65,7 @@ class DeviceClient:
             "width": _int(response.headers.get("x-frame-width")),
             "height": _int(response.headers.get("x-frame-height")),
             "format": response.headers.get("x-frame-format", ""),
+            "backend": response.headers.get("x-frame-backend", ""),
         }
         if not response.content:
             raise DeviceError("抓取返回了空响应体")

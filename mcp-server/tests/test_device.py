@@ -36,12 +36,18 @@ def test_capture_reads_frame_headers():
                 "X-Frame-Width": "1920",
                 "X-Frame-Height": "1080",
                 "X-Frame-Format": "MJPEG",
+                "X-Frame-Backend": "webstream",
             },
         )
 
     data, meta = make_client(handler).capture()
     assert data == b"\xff\xd8\xff\xd9"
-    assert meta == {"width": 1920, "height": 1080, "format": "MJPEG"}
+    assert meta == {
+        "width": 1920,
+        "height": 1080,
+        "format": "MJPEG",
+        "backend": "webstream",
+    }
 
 
 def test_capture_error_surfaces_device_message():

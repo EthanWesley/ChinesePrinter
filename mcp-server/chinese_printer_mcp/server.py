@@ -320,6 +320,7 @@ def get_status() -> dict:
         "step": health.get("step", -1),
         "last_error": health.get("last_error", ""),
         "capture_available": bool(health.get("capture", {}).get("available")),
+        "capture_backend": health.get("capture", {}).get("prefer"),
         "capture_format": frame.get("format"),
         "mouse_available": bool(health.get("mouse", {}).get("available")),
         "mouse_device": health.get("mouse", {}).get("device", ""),

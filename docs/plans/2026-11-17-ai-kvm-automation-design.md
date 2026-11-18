@@ -20,7 +20,7 @@
 | 端点 | 方法 | 说明 |
 |---|---|---|
 | `/health` | GET | busy/progress/total/step/error、capture/mouse/keyboard 可用性、typewriter_busy |
-| `/capture` | GET | 调 `capture` 输出 JPEG；`?warmup=N`；响应体经 `cat` 直写 socket |
+| `/capture` | GET | 输出 JPEG；首选从 Web H.264 流抽帧（`CAPTURE_PREFER=webstream`，不中断视频），失败回退 V4L2 直采；`?warmup=N`；响应体经 `cat` 直写 socket；`X-Frame-Backend` 头标明实际后端 |
 | `/seq` | POST | 请求体为行协议纯文本，落盘后后台执行 seq_writer |
 | `/stop` | POST | 行边界优雅停止 |
 | `/abort` | POST | 停止 + kill + 向两个 hidg 写全零报告 |
@@ -153,4 +153,38 @@ kill `kvm_video` 让出设备，抓帧成功后 `kvm_app` 在数秒内自动把�
 - 真机键鼠实动作（组合键、打字、点击、拖拽）尚未在目标电脑上肉眼验收；
   设备端协议与状态回传已通过 `wait` 类安全序列验证。
 - M6 完整闭环（截屏 → 批量填表 → 再截屏验证）待键鼠实动作验收后执行。
+
+### 更优雅的截图后端：Web 视频流抽帧（2026-11-18，已实测部署）
+
+前述 V4L2 直采需要临时让出 `kvm_video`，会中断 Web 视频约 3 秒。发现设备
+自带的 `kvm_app`（Luckfox PicoKVM 固件）其实**已经在把 video0 编码为 H.264
+并持续推送到 `http://127.0.0.1:80/video/stream`**（`Content-Type: video/x-h264`，
+免认证，Annex-B NALU `00 00 00 01 41 e0` 开头）。于是截图不必再抢
+`/dev/video0` 的单路 DMA——直接从这条现成的 H.264 流解一帧即可。
+
+**实现**（`automation_server.sh` + `install.sh`）：
+
+- 新增 `CAPTURE_PREFER`（默认 `webstream`）选择截图后端：
+  - `webstream`（首选）：设备自带 `ffmpeg` 从 `WEBSTREAM_URL`
+    （默认 `http://127.0.0.1:80/video/stream`）抽 1 帧转 JPEG。
+      全程不触碰 video0、不 kill `kvm_video`、Web 视频零中断。
+    `WEBSTREAM_TIMEOUT` 默认 25 s（受关键帧间隔影响，实测单帧约 4–8 s）。
+  - `v4l2`（保底）：原 `capture` 二进制直采 `/dev/video0`，失败时沿用
+    `CAPTURE_YIELD_KVM=1` 的让出逻辑。webstream 出错时自动回退到此路径。
+- `/capture` 响应新增 `X-Frame-Backend: webstream|v4l2` 头（实际生效后端）；
+  `/health` 的 `capture` 新增 `prefer` 与 `webstream.available/url`。
+- MCP 端 `DeviceClient.capture()` 的 headers 增加 `backend`，
+  `get_status()` 增加 `capture_backend`。均为增量字段，向后兼容。
+
+**实测结果（192.168.10.114）**：
+
+- 默认 webstream：`X-Frame-Backend: webstream`，1920×1080 mjpeg，
+  连续 3 帧均成功、约 4.7 s/帧；截图前后 `kvm_video`（PID 2964）始终存活，
+  `/video/stream` 持续 HTTP 200 —— **Web 视频零中断**。
+- 切到 `CAPTURE_PREFER=v4l2`：返回 `X-Frame-Backend: v4l2`、YUYV，保底路径可用；
+  测试后已恢复默认 webstream。
+- 抽出的画面为有效桌面（Ubuntu dock、时间、壁纸清晰可辨）。
+
+**注意**：ffmpeg 4.x 靠扩展名推断输出格式，临时文件名带 `.tmp.<pid>` 后缀，
+必须显式加 `-f mjpeg`，否则报 `Unable to find a suitable output format`。
 

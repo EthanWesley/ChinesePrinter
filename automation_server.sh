@@ -46,6 +46,17 @@ CAPTURE_DEVICE="${CAPTURE_DEVICE:-/dev/video0}"
 # CAPTURE_YIELD_KVM=1（默认）：抓帧失败时临时让 kvm_video 退出，抓完由 kvm_app 自动拉起。
 # CAPTURE_YIELD_KVM=0：不让出，Web 视频占用时 /capture 直接返回 503。
 CAPTURE_YIELD_KVM="${CAPTURE_YIELD_KVM:-1}"
+
+# ---- 截图后端选择 ----
+# webstream（默认，首选）：复用 kvm_app 已经在推的 Web 视频流
+#   (/video/stream, video/x-h264)，用设备端 ffmpeg 解一帧 JPEG。
+#   优点：不抢 /dev/video0 的 rkcif 单路 DMA、Web 视频不中断、无需 kill kvm_video。
+# v4l2（保底）：原 capture 二进制直采 /dev/video0，必要时临时让出 kvm_video。
+CAPTURE_PREFER="${CAPTURE_PREFER:-webstream}"
+WEBSTREAM_URL="${WEBSTREAM_URL:-http://127.0.0.1:80/video/stream}"
+WEBSTREAM_TIMEOUT="${WEBSTREAM_TIMEOUT:-25}"
+FFMPEG_BIN="${FFMPEG_BIN:-ffmpeg}"
+
 SEQ_BIN="${SEQ_BIN:-$INSTALL_DIR/seq_writer}"
 PROBE_BIN="${PROBE_BIN:-$INSTALL_DIR/probe_device.sh}"
 REPORT_DELAY="${REPORT_DELAY:-8}"
@@ -207,6 +218,8 @@ api_health() {
             [ -e "$_v" ] && { _cap_ok=true; break; }
         done
     fi
+    _ws_ok=false
+    command -v "$FFMPEG_BIN" >/dev/null 2>&1 && _ws_ok=true
 
     if [ -f "$AUTO_META" ]; then
         _frame=$(cat "$AUTO_META" 2>/dev/null | tr -d '\r\n')
@@ -217,12 +230,35 @@ api_health() {
 
     printf '{"ok":true,"busy":%s,"progress":%s,"total":%s,"step":%s,"last_error":"%s",' \
         "$_busy" "$_progress" "$_total" "$_step" "$_last_err"
-    printf '"capture":{"available":%s,"binary":"%s","device":"%s","last_frame":%s},' \
-        "$_cap_ok" "$CAPTURE_BIN" "$CAPTURE_DEVICE" "$_frame"
+    printf '"capture":{"available":%s,"binary":"%s","device":"%s","last_frame":%s,"prefer":"%s","webstream":{"available":%s,"url":"%s"}},' \
+        "$_cap_ok" "$CAPTURE_BIN" "$CAPTURE_DEVICE" "$_frame" "$CAPTURE_PREFER" "$_ws_ok" "$WEBSTREAM_URL"
     printf '"keyboard":{"available":%s,"device":"%s"},' "$_kbd_ok" "$_kbd"
     printf '"mouse":{"available":%s,"device":"%s","report_size":%s,"absolute":%s},' \
         "$_mouse_ok" "$_mouse" "$MOUSE_REPORT_SIZE" "$([ "$MOUSE_ABSOLUTE" = "1" ] && echo true || echo false)"
     printf '"typewriter_busy":%s,"port":%s}' "$_tw_busy" "$PORT"
+}
+
+# ---- 首选截图后端：从 kvm_app 的 Web 视频流抽帧 ----
+# kvm_app 已在把 video0 编码成 H.264 并推送到 WEBSTREAM_URL（本机 80 端口，
+# 免认证）。用设备自带 ffmpeg 解一帧即可，全程不触碰 video0、不中断 Web 视频。
+# 参数: $1=输出 jpg 路径
+# 返回: 0 成功 / 非 0 失败
+capture_via_webstream() {
+    _out="$1"
+    _ff_err="$STATE_DIR/auto_webstream.err.$$"
+    command -v "$FFMPEG_BIN" >/dev/null 2>&1 || { rm -f "$_out"; return 1; }
+    # 显式 -f mjpeg：临时文件名带 .tmp.<pid> 后缀，ffmpeg 4.x 无法靠扩展名推断格式
+    timeout "$WEBSTREAM_TIMEOUT" "$FFMPEG_BIN" -hide_banner -loglevel error \
+        -i "$WEBSTREAM_URL" -frames:v 1 -f mjpeg -q:v 3 -y "$_out" 2>"$_ff_err"
+    _rc=$?
+    if [ "$_rc" != "0" ] || [ ! -s "$_out" ]; then
+        _detail=$(tail -n 2 "$_ff_err" 2>/dev/null | tr '\r\n' '  ')
+        rm -f "$_out" "$_ff_err"
+        warn "Web 流抽帧失败 rc=$_rc: $_detail"
+        return 1
+    fi
+    rm -f "$_ff_err"
+    return 0
 }
 
 # 释放被 kvm_video 独占的采集节点。
@@ -267,20 +303,45 @@ api_capture() {
     _err_file="$STATE_DIR/auto_capture.err.$$"
     rm -f "$_tmp_frame" "$_tmp_meta"
 
-    "$CAPTURE_BIN" --device "$CAPTURE_DEVICE" --output "$_tmp_frame" --meta "$_tmp_meta" \
-        --warmup "$_warmup" >/dev/null 2>"$_err_file"
-    _rc=$?
+    _backend="webstream"
+    _rc=1
+    # 首选：Web 视频流抽帧（不碰 video0、不中断 Web 视频）
+    if [ "$CAPTURE_PREFER" = "webstream" ]; then
+        if capture_via_webstream "$_tmp_frame"; then
+            _rc=0
+            # webstream 路径没有 capture 二进制生成的 meta，用 ffprobe 补齐
+            _ws_w=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$_tmp_frame" 2>/dev/null | tr -d '\r\n, ')
+            _ws_h=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$_tmp_frame" 2>/dev/null | tr -d '\r\n, ')
+            case "$_ws_w" in ''|*[!0-9]*) _ws_w=0 ;; esac
+            case "$_ws_h" in ''|*[!0-9]*) _ws_h=0 ;; esac
+            printf '{"width":%s,"height":%s,"format":"mjpeg"}\n' "$_ws_w" "$_ws_h" > "$_tmp_meta"
+        fi
+    fi
 
-    # 首轮失败且设备被 kvm_video 独占：让出设备后重试一次
+    # 保底：V4L2 直采（webstream 未启用或失败时）
     if [ "$_rc" != "0" ] || [ ! -s "$_tmp_frame" ]; then
-        if yield_kvm_for_capture; then
-            warn "采集节点被 kvm_video 独占，已临时让出 (pid=$_kvm_suspend_pid)，重试抓帧"
-            rm -f "$_tmp_frame" "$_tmp_meta" "$_err_file"
-            "$CAPTURE_BIN" --device "$CAPTURE_DEVICE" --output "$_tmp_frame" --meta "$_tmp_meta" \
-                --warmup "$_warmup" >/dev/null 2>"$_err_file"
-            _rc=$?
-            if [ "$_rc" = "0" ] && [ -s "$_tmp_frame" ]; then
-                log "让出后抓帧成功；kvm_app 将在数秒内自动恢复 Web 视频流"
+        [ "$CAPTURE_PREFER" = "webstream" ] && warn "Web 流不可用，回退 V4L2 直采保底路径"
+        _backend="v4l2"
+        if [ ! -x "$CAPTURE_BIN" ]; then
+            http_json 503 '{"ok":false,"msg":"capture 二进制未安装且 Web 流不可用"}'
+            return
+        fi
+        rm -f "$_tmp_frame" "$_tmp_meta"
+        "$CAPTURE_BIN" --device "$CAPTURE_DEVICE" --output "$_tmp_frame" --meta "$_tmp_meta" \
+            --warmup "$_warmup" >/dev/null 2>"$_err_file"
+        _rc=$?
+
+        # 首轮失败且设备被 kvm_video 独占：让出设备后重试一次
+        if [ "$_rc" != "0" ] || [ ! -s "$_tmp_frame" ]; then
+            if yield_kvm_for_capture; then
+                warn "采集节点被 kvm_video 独占，已临时让出 (pid=$_kvm_suspend_pid)，重试抓帧"
+                rm -f "$_tmp_frame" "$_tmp_meta" "$_err_file"
+                "$CAPTURE_BIN" --device "$CAPTURE_DEVICE" --output "$_tmp_frame" --meta "$_tmp_meta" \
+                    --warmup "$_warmup" >/dev/null 2>"$_err_file"
+                _rc=$?
+                if [ "$_rc" = "0" ] && [ -s "$_tmp_frame" ]; then
+                    log "让出后抓帧成功；kvm_app 将在数秒内自动恢复 Web 视频流"
+                fi
             fi
         fi
     fi
@@ -309,8 +370,9 @@ api_capture() {
     printf 'X-Frame-Height: %s\r\n' "$_h"
     printf 'X-Frame-Format: %s\r\n' "$_fmt"
     printf 'X-Frame-Bytes: %s\r\n' "$_len"
+    printf 'X-Frame-Backend: %s\r\n' "$_backend"
     printf 'Access-Control-Allow-Origin: *\r\n'
-    printf 'Access-Control-Expose-Headers: X-Frame-Width, X-Frame-Height, X-Frame-Format, X-Frame-Bytes\r\n'
+    printf 'Access-Control-Expose-Headers: X-Frame-Width, X-Frame-Height, X-Frame-Format, X-Frame-Bytes, X-Frame-Backend\r\n'
     printf 'Cache-Control: no-store\r\n'
     printf 'Connection: close\r\n'
     printf '\r\n'
@@ -556,7 +618,8 @@ log "ChinesePrinter 自动化通道启动 (shell + socat)"
 log "  监听端口: $PORT"
 log "  键盘设备: $(find_kbd)"
 log "  鼠标设备: $(find_mouse)"
-log "  截图工具: $CAPTURE_BIN (设备 $CAPTURE_DEVICE)"
+log "  截图首选: $CAPTURE_PREFER (Web流=$WEBSTREAM_URL, timeout=${WEBSTREAM_TIMEOUT}s, ffmpeg=$FFMPEG_BIN)"
+log "  截图保底: $CAPTURE_BIN (设备 $CAPTURE_DEVICE, yield_kvm=$CAPTURE_YIELD_KVM)"
 log "  序列执行: $SEQ_BIN"
 log "========================================="
 
@@ -570,6 +633,7 @@ fi
 
 export INSTALL_DIR PORT STATE_DIR LOG_FILE
 export CAPTURE_BIN CAPTURE_DEVICE CAPTURE_YIELD_KVM SEQ_BIN PROBE_BIN
+export CAPTURE_PREFER WEBSTREAM_URL WEBSTREAM_TIMEOUT FFMPEG_BIN
 export REPORT_DELAY MOUSE_REPORT_SIZE MOUSE_ABSOLUTE
 export KBD_DEVICE MOUSE_DEVICE
 
